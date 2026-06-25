@@ -1,23 +1,13 @@
-import { SNAPSHOT } from "@/data/snapshot";
+import { getUniverse } from "@/lib/universe";
+import { formatActual } from "@/lib/fields";
 import type {
   Condition,
+  EnrichedStock,
   MatchDetail,
   NumericField,
   ScreenFilter,
   ScreenResult,
-  Stock,
 } from "@/lib/types";
-
-const FIELD_LABEL: Record<NumericField, string> = {
-  per: "PER",
-  pbr: "PBR",
-  dividendYield: "배당수익률",
-  marketCap: "시가총액",
-  roe: "ROE",
-  price: "주가",
-  changePct: "등락률",
-  volume: "거래량",
-};
 
 function compare(actual: number, op: Condition["op"], value: number): boolean {
   switch (op) {
@@ -40,17 +30,7 @@ function isMeaningful(field: NumericField, value: number): boolean {
   return true;
 }
 
-function formatActual(field: NumericField, value: number): string {
-  const label = FIELD_LABEL[field];
-  if (field === "marketCap") return `${label} ${value.toLocaleString()}억`;
-  if (field === "dividendYield" || field === "roe" || field === "changePct")
-    return `${label} ${value.toFixed(1)}%`;
-  if (field === "volume") return `${label} ${value.toLocaleString()}주`;
-  if (field === "price") return `${label} ${value.toLocaleString()}원`;
-  return `${label} ${value.toFixed(1)}`;
-}
-
-function passesConditions(stock: Stock, conditions: Condition[]): MatchDetail[] | null {
+function passesConditions(stock: EnrichedStock, conditions: Condition[]): MatchDetail[] | null {
   const matched: MatchDetail[] = [];
   for (const c of conditions) {
     const actual = stock[c.field];
@@ -65,14 +45,24 @@ export function screen(filter: ScreenFilter): ScreenResult[] {
   const market = filter.market ?? "ALL";
   const sector = filter.sector?.trim() || null;
 
-  let results: ScreenResult[] = [];
+  const results: ScreenResult[] = [];
 
-  for (const stock of SNAPSHOT) {
+  for (const stock of getUniverse()) {
     if (market !== "ALL" && stock.market !== market) continue;
     if (sector && !stock.sector.includes(sector)) continue;
 
+    // 음봉/양봉 filter
+    if (filter.bearish != null && stock.bearish !== filter.bearish) continue;
+
     const matched = passesConditions(stock, filter.conditions);
     if (matched === null) continue;
+
+    if (filter.bearish != null) {
+      matched.unshift({
+        label: filter.bearish ? "음봉" : "양봉",
+        actual: filter.bearish ? "음봉" : "양봉",
+      });
+    }
 
     results.push({ stock, matched });
   }

@@ -24,7 +24,12 @@ export type NumericField =
   | "roe"
   | "price"
   | "changePct"
-  | "volume";
+  | "volume"
+  // technical (derived from the candle series)
+  | "volSurgeRatio" // 전일 거래량 / 전전일 거래량 × 100
+  | "volDropRatio" // 당일 거래량 / 전일 거래량 × 100
+  | "gap5MAAbs" // |5일선 이격도| %
+  | "tradingValue"; // 거래대금 (억)
 
 export type Op = "<" | "<=" | ">" | ">=" | "==";
 
@@ -36,10 +41,23 @@ export interface Condition {
   label: string;
 }
 
+/** A stock enriched with technical metrics computed from its candle series. */
+export interface EnrichedStock extends Stock {
+  ma5: number; // 5일 이동평균
+  gap5MA: number; // 5일선 이격도 % (부호)
+  gap5MAAbs: number; // |이격도| %
+  volSurgeRatio: number; // 전일 거래량 / 전전일 거래량 × 100
+  volDropRatio: number; // 당일 거래량 / 전일 거래량 × 100
+  bearish: boolean; // 당일 음봉 여부
+  tradingValue: number; // 거래대금 (억)
+}
+
 export interface ScreenFilter {
   market?: Market | "ALL";
   sector?: string | null;
   conditions: Condition[];
+  /** 음봉 필터: true=음봉만, false=양봉만, null/미지정=무관 */
+  bearish?: boolean | null;
   sortBy?: { field: NumericField; dir: "asc" | "desc" } | null;
   limit?: number;
   /** One-line explanation of how the query was interpreted. */
@@ -52,7 +70,7 @@ export interface MatchDetail {
 }
 
 export interface ScreenResult {
-  stock: Stock;
+  stock: EnrichedStock;
   matched: MatchDetail[];
 }
 
