@@ -33,3 +33,6 @@ yarn-error.log*
 
 # local tooling
 .claude
+
+# backtester data cache
+scripts/.bt-cache.json
