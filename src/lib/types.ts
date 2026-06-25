@@ -101,5 +101,5 @@ export interface ChartResponse {
   code: string;
   name: string;
   candles: Candle[];
-  source: "kis" | "mock";
+  source: "kis" | "naver" | "mock";
 }

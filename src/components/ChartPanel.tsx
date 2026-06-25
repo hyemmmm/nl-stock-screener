@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { detectLevels } from "@/lib/levels";
 import type { ChartResponse, EnrichedStock } from "@/lib/types";
 
 interface Props {
   stock: EnrichedStock | null;
 }
 
+const SUPPORT_COLOR = "#22c55e"; // 지지 = 초록
+const RESIST_COLOR = "#f59e0b"; // 저항 = 주황
+
 export default function ChartPanel({ stock }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<ChartResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 지지/저항 레벨 (캔들에서 자동 탐지)
+  const levels = useMemo(() => (data ? detectLevels(data.candles) : []), [data]);
 
   // fetch candles when the selected stock changes
   useEffect(() => {
@@ -81,8 +88,8 @@ export default function ChartPanel({ stock }: Props) {
         })),
       );
 
-      // mark the detected signal day (며칠 전 패턴 발생 지점)
-      if (stock && stock.signalDaysAgo > 0) {
+      // 신호 마커는 mock 스냅샷 기반 → 실데이터 차트엔 표시하지 않음
+      if (stock && stock.signalDaysAgo > 0 && data.source === "mock") {
         candleSeries.setMarkers([
           {
             time: stock.signalDate,
@@ -109,6 +116,18 @@ export default function ChartPanel({ stock }: Props) {
         lastValueVisible: false,
       });
       ma5Series.setData(ma5);
+
+      // 지지/저항 수평선 (1차 = 실선·굵게, 2차+ = 점선)
+      for (const lv of levels) {
+        candleSeries.createPriceLine({
+          price: lv.price,
+          color: lv.kind === "support" ? SUPPORT_COLOR : RESIST_COLOR,
+          lineWidth: lv.rank === 1 ? 2 : 1,
+          lineStyle: lv.rank === 1 ? 0 : 2, // 0 Solid, 2 Dashed
+          axisLabelVisible: true,
+          title: `${lv.kind === "support" ? "지지" : "저항"}${lv.rank}차`,
+        });
+      }
 
       const volSeries = chart.addHistogramSeries({
         priceFormat: { type: "volume" },
@@ -139,7 +158,7 @@ export default function ChartPanel({ stock }: Props) {
       disposed = true;
       cleanup();
     };
-  }, [data]);
+  }, [data, levels, stock]);
 
   if (!stock) {
     return (
@@ -149,7 +168,17 @@ export default function ChartPanel({ stock }: Props) {
     );
   }
 
-  const up = stock.changePct >= 0;
+  // 차트가 실데이터면 표시값(가격·등락률·이격·음봉)도 실캔들에서 계산
+  const cs = data?.candles ?? [];
+  const lastC = cs[cs.length - 1];
+  const prevC = cs[cs.length - 2];
+  const price = lastC?.close ?? stock.price;
+  const changePct =
+    lastC && prevC ? ((lastC.close - prevC.close) / prevC.close) * 100 : stock.changePct;
+  const ma5last = cs.length >= 5 ? cs.slice(-5).reduce((s, x) => s + x.close, 0) / 5 : 0;
+  const gap5 = ma5last ? ((price - ma5last) / ma5last) * 100 : stock.gap5MA;
+  const dayBearish = lastC ? lastC.close < lastC.open : stock.bearish;
+  const up = changePct >= 0;
 
   return (
     <div className="rounded-2xl border border-ink-600 bg-ink-800 p-5">
@@ -164,17 +193,21 @@ export default function ChartPanel({ stock }: Props) {
           </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-bold tabular-nums text-white">
-              {stock.price.toLocaleString()}
+              {price.toLocaleString()}
               <span className="ml-0.5 text-sm font-normal text-zinc-500">원</span>
             </span>
             <span className={`text-sm font-medium ${up ? "text-up" : "text-down"}`}>
-              {up ? "▲" : "▼"} {Math.abs(stock.changePct).toFixed(2)}%
+              {up ? "▲" : "▼"} {Math.abs(changePct).toFixed(2)}%
             </span>
           </div>
         </div>
         {data && (
           <span className="rounded-full border border-ink-500 px-2 py-0.5 text-[10px] text-zinc-500">
-            {data.source === "kis" ? "KIS 실시간" : "MOCK 데이터"}
+            {data.source === "kis"
+              ? "KIS 실시간"
+              : data.source === "naver"
+                ? "네이버 실데이터"
+                : "MOCK 데이터"}
           </span>
         )}
       </div>
@@ -199,13 +232,45 @@ export default function ChartPanel({ stock }: Props) {
         </span>
         <span>
           5일선 이격{" "}
-          <span className={stock.gap5MAAbs <= 3 ? "text-emerald-400" : "text-zinc-400"}>
-            {stock.gap5MA >= 0 ? "+" : ""}
-            {stock.gap5MA.toFixed(1)}%
+          <span className={Math.abs(gap5) <= 3 ? "text-emerald-400" : "text-zinc-400"}>
+            {gap5 >= 0 ? "+" : ""}
+            {gap5.toFixed(1)}%
           </span>
         </span>
-        <span>당일 {stock.bearish ? "음봉 🔵" : "양봉 🔴"}</span>
+        <span>당일 {dayBearish ? "음봉 🔵" : "양봉 🔴"}</span>
       </div>
+
+      {/* 자동 탐지된 지지/저항 레벨 */}
+      {levels.length > 0 && (
+        <div className="mt-3 border-t border-ink-700 pt-3">
+          <div className="mb-1.5 text-[11px] font-medium text-zinc-400">
+            자동 지지/저항{" "}
+            <span className="text-zinc-600">· 스윙 고저점 {`>`} 가격대 클러스터 (터치=강도)</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {levels
+              .slice()
+              .sort((a, b) => b.price - a.price)
+              .map((lv, i) => (
+                <span
+                  key={i}
+                  className="rounded-md px-2 py-0.5 text-[11px] tabular-nums ring-1 ring-inset"
+                  style={{
+                    color: lv.kind === "support" ? SUPPORT_COLOR : RESIST_COLOR,
+                    borderColor: "transparent",
+                    boxShadow: `inset 0 0 0 1px ${
+                      lv.kind === "support" ? SUPPORT_COLOR : RESIST_COLOR
+                    }33`,
+                  }}
+                  title={`${lv.touches}회 터치`}
+                >
+                  {lv.kind === "support" ? "지지" : "저항"}
+                  {lv.rank}차 {lv.price.toLocaleString()} · {lv.touches}터치
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

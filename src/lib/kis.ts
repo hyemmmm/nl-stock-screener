@@ -1,5 +1,6 @@
 import { SNAPSHOT } from "@/data/snapshot";
 import { generateCandles } from "@/lib/candles";
+import { fetchNaverDaily } from "@/lib/naver";
 import type { Candle } from "@/lib/types";
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -109,17 +110,24 @@ async function fetchKisCandles(code: string): Promise<Candle[]> {
 
 export interface ChartData {
   candles: Candle[];
-  source: "kis" | "mock";
+  source: "kis" | "naver" | "mock";
 }
 
 export async function getCandles(code: string): Promise<ChartData> {
+  // 우선순위: KIS(키 있으면) → 네이버(무료 실데이터) → mock 캔들
   if (kisConfigured()) {
     try {
       const candles = await fetchKisCandles(code);
       if (candles.length > 0) return { candles, source: "kis" };
     } catch (err) {
-      console.error("[kis] live fetch failed, using mock:", err);
+      console.error("[kis] live fetch failed, trying Naver:", err);
     }
+  }
+  try {
+    const candles = await fetchNaverDaily(code);
+    if (candles.length > 0) return { candles, source: "naver" };
+  } catch (err) {
+    console.error("[naver] fetch failed, using mock:", err);
   }
   const stock = SNAPSHOT.find((s) => s.code === code);
   const base = stock?.price ?? 50000;
