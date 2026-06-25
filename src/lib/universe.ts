@@ -34,6 +34,9 @@ export function getUniverse(): EnrichedStock[] {
       volDropRatio: t.volDropRatio,
       bearish: t.bearish,
       tradingValue: t.tradingValue,
+      recentMaxVol: t.recentMaxVol,
+      signalDate: t.signalDate,
+      signalDaysAgo: t.signalDaysAgo,
     };
   });
   return cached;

@@ -29,7 +29,8 @@ export type NumericField =
   | "volSurgeRatio" // 전일 거래량 / 전전일 거래량 × 100
   | "volDropRatio" // 당일 거래량 / 전일 거래량 × 100
   | "gap5MAAbs" // |5일선 이격도| %
-  | "tradingValue"; // 거래대금 (억)
+  | "tradingValue" // 거래대금 (억)
+  | "recentMaxVol"; // 최근 ~2개월 최대 거래량 (주)
 
 export type Op = "<" | "<=" | ">" | ">=" | "==";
 
@@ -46,10 +47,13 @@ export interface EnrichedStock extends Stock {
   ma5: number; // 5일 이동평균
   gap5MA: number; // 5일선 이격도 % (부호)
   gap5MAAbs: number; // |이격도| %
-  volSurgeRatio: number; // 전일 거래량 / 전전일 거래량 × 100
-  volDropRatio: number; // 당일 거래량 / 전일 거래량 × 100
-  bearish: boolean; // 당일 음봉 여부
+  volSurgeRatio: number; // 전일 거래량 / 전전일 거래량 × 100 (신호일 기준)
+  volDropRatio: number; // 당일 거래량 / 전일 거래량 × 100 (신호일 기준)
+  bearish: boolean; // 신호일 음봉 여부
   tradingValue: number; // 거래대금 (억)
+  recentMaxVol: number; // 최근 ~2개월 최대 거래량 (주)
+  signalDate: string; // 신호일 (YYYY-MM-DD)
+  signalDaysAgo: number; // 신호일이 며칠 전(거래일)인지
 }
 
 export interface ScreenFilter {
@@ -67,6 +71,7 @@ export interface ScreenFilter {
 export interface MatchDetail {
   label: string; // condition label, e.g. "PER < 10"
   actual: string; // formatted actual value, e.g. "PER 8.2"
+  threshold?: string; // target part, e.g. "< 10" — for the ✓ checklist
 }
 
 export interface ScreenResult {
