@@ -20,6 +20,7 @@ const VALID_FIELDS: NumericField[] = [
   "volDropRatio",
   "gap5MAAbs",
   "tradingValue",
+  "recentMaxVol",
 ];
 const VALID_OPS: Op[] = ["<", "<=", ">", ">=", "=="];
 
@@ -66,7 +67,7 @@ const RULES: Rule[] = [
 
   // size
   { test: /대형주|대형/i, apply: (f) => addCond(f, "marketCap", ">", 100000) },
-  { test: /중소형주|중소형|소형주|작은/i, apply: (f) => addCond(f, "marketCap", "<", 50000) },
+  { test: /중소형주|중소형|소형주/i, apply: (f) => addCond(f, "marketCap", "<", 50000) },
   { test: /중형주/i, apply: (f) => addCond(f, "marketCap", "<", 100000) },
 
   // quality / momentum
@@ -93,6 +94,11 @@ const RULES: Rule[] = [
   {
     test: /5일선|오일선|이격\s*(작|적|좁|크지\s*않)|5일\s*이동평균|맞닿|단기\s*이평\s*근접/i,
     apply: (f) => addCond(f, "gap5MAAbs", "<", 3),
+  },
+  // 최근 거래량 1000만/천만 이상 나온 적 (호재성 대량거래의 프록시)
+  {
+    test: /(거래량\s*)?(1[,]?000\s*만|천만)\s*(주)?\s*(이상|이상\s*나온|찍|돌파|터)/i,
+    apply: (f) => addCond(f, "recentMaxVol", ">=", 10_000_000),
   },
 ];
 
@@ -125,8 +131,8 @@ function ruleBasedParse(query: string): ScreenFilter {
     const op: Op = /이하|미만/.test(divMatch[2] ?? "") ? "<" : ">";
     addCond(filter, "dividendYield", op, v);
   }
-  // 이격 N% 이하 / 5일선 N%
-  const gapMatch = query.match(/이격\D*(\d+(?:\.\d+)?)\s*%?\s*(이하|미만|이내)?/);
+  // 이격 N% (숫자 바로 뒤에 %가 있어야 함 — 멀리 있는 "1000만" 등을 잘못 잡지 않도록)
+  const gapMatch = query.match(/이격[^0-9%]{0,3}(\d+(?:\.\d+)?)\s*%/);
   if (gapMatch) addCond(filter, "gap5MAAbs", "<", Number(gapMatch[1]));
   // 거래량 N% (이상 → 폭증, 이하 → 급감)
   const volPctMatch = query.match(/거래량\D*(\d{2,4})\s*%\s*(이상|초과|이하|미만)?/);
@@ -134,6 +140,14 @@ function ruleBasedParse(query: string): ScreenFilter {
     const v = Number(volPctMatch[1]);
     if (/이하|미만/.test(volPctMatch[2] ?? "")) addCond(filter, "volDropRatio", "<", v);
     else addCond(filter, "volSurgeRatio", ">", v);
+  }
+  // 최근 거래량 N만(주) 이상 나온 적 — recentMaxVol (주)
+  const recentVolMatch = query.match(
+    /([\d,]+)\s*만\s*주?\s*(이상)?\s*(나온|찍|기록|돌파|터)/,
+  );
+  if (recentVolMatch) {
+    const man = Number(recentVolMatch[1].replace(/,/g, ""));
+    if (Number.isFinite(man)) addCond(filter, "recentMaxVol", ">=", man * 10_000);
   }
 
   const parts = filter.conditions.map((c) => c.label);
@@ -217,7 +231,9 @@ const SYSTEM = `너는 한국 주식 스크리너의 자연어 파서다.
 - 음봉 → bearish=true, 양봉 → bearish=false
 - 5일선 이격이 작다/맞닿는다/근접 → gap5MAAbs<3
 - "거래량 폭증 후 급감" 같이 두 단계면 volSurgeRatio와 volDropRatio 조건을 모두 넣는다.
+- "최근 (N개월/두달) 안에 거래량 1000만(주) 이상 나온 적 있음" → recentMaxVol>=10000000 (단위: 주, 1000만=10000000). 윈도우는 서버에서 약 2개월(40거래일)로 고정.
 
+참고: volSurgeRatio/volDropRatio/bearish/gap5MAAbs는 서버가 최근 약 20거래일을 스캔해 '신호일'을 찾아 그 시점 기준으로 평가한다(며칠 전 발생도 잡힘). 너는 조건만 만들면 된다.
 명확한 숫자가 있으면 그대로 사용한다. 반드시 build_filter 도구를 호출한다.`;
 
 async function claudeParse(query: string): Promise<ScreenFilter> {
