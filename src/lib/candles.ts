@@ -89,10 +89,10 @@ function injectPattern(candles: Candle[], kind: PatternKind, rnd: () => number) 
     d0.low = Math.round(Math.min(d0.open, close) * (1 - rnd() * 0.01));
   } else if (kind === "sustained-surge") {
     const d0 = candles[n - 1];
-    const baseVol = 400_000 + Math.round(rnd() * 400_000);
+    const baseVol = 1_000_000 + Math.round(rnd() * 1_000_000);
     candles[n - 3].volume = baseVol;
-    candles[n - 2].volume = Math.round(baseVol * (6 + rnd() * 4)); // +500~900%
-    d0.volume = Math.round(candles[n - 2].volume * (1 + rnd() * 0.3));
+    candles[n - 2].volume = Math.round(baseVol * (8 + rnd() * 8)); // 폭증, 최대 ~32M (양봉+대량거래)
+    d0.volume = Math.round(candles[n - 2].volume * (0.9 + rnd() * 0.3));
     d0.close = Math.round(d0.open * (1.04 + rnd() * 0.05)); // bullish 급등 +4~9%
     d0.high = Math.round(d0.close * (1 + rnd() * 0.01));
     d0.low = Math.round(d0.open * (1 - rnd() * 0.01));
