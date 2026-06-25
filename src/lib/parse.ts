@@ -207,7 +207,7 @@ const FILTER_SCHEMA: Record<string, unknown> = {
           dir: { type: "string", enum: ["asc", "desc"] },
         },
       },
-      limit: { type: "number" },
+      limit: { type: ["number", "null"] },
       rationale: {
         type: "string",
         description: "One short Korean sentence explaining how you interpreted the request.",
@@ -229,7 +229,7 @@ const SYSTEM = `너는 한국 주식 스크리너의 자연어 파서다.
 [기술적/캔들 패턴]
 - (전일) 거래량 폭증 → volSurgeRatio>500 (사용자가 500~1000% 등 명시하면 그 값 사용)
 - (이후) 거래량 급감 → volDropRatio<25 (12% 미만이 더 좋다고 하면 그래도 25 이하로 잡되 sortBy를 volDropRatio asc로)
-- 음봉 → bearish=true, 양봉 → bearish=false
+- 음봉 → bearish=true, 양봉 → bearish=false (※ 음봉/양봉은 conditions 배열에 넣지 말고 최상위 bearish 필드로만 표현)
 - 5일선 이격이 작다/맞닿는다/근접 → gap5MAAbs<3
 - "거래량 폭증 후 급감" 같이 두 단계면 volSurgeRatio와 volDropRatio 조건을 모두 넣는다.
 - "최근 (N개월/두달) 안에 거래량 1000만(주) 이상 나온 적 있음" → recentMaxVol>=10000000 (단위: 주, 1000만=10000000). 윈도우는 서버에서 약 2개월(40거래일)로 고정.
@@ -292,9 +292,25 @@ async function claudeParse(query: string): Promise<ScreenFilter> {
   return normalizeFilter(toolUse.input as Record<string, unknown>);
 }
 
+// JSON-mode instruction for OpenAI-compatible models. We deliberately use
+// json_object (not strict tool-calling) so a minor model slip doesn't get the
+// whole response rejected by the provider — normalizeFilter cleans it instead.
+const JSON_INSTRUCTION = `반드시 아래 형태의 JSON 객체 하나만 출력한다(설명·코드블록 금지):
+{
+  "market": "KOSPI" | "KOSDAQ" | "ALL",
+  "sector": 섹터 키워드(string) 또는 null,
+  "conditions": [ { "field": <필드>, "op": "<"|"<="|">"|">="|"==", "value": 숫자 } ],
+  "bearish": true | false | null,
+  "sortBy": { "field": <필드>, "dir": "asc"|"desc" } 또는 null,
+  "limit": 숫자 또는 null,
+  "rationale": "해석 한 줄(한국어)"
+}
+<필드>는 반드시 다음 중 하나: ${VALID_FIELDS.join(", ")}.
+음봉/양봉은 conditions가 아니라 bearish 필드로만 표현한다. value는 항상 숫자다.`;
+
 /**
  * Parse via any OpenAI-compatible chat-completions endpoint (Groq by default,
- * but also OpenRouter, a local Ollama, etc.) using function calling.
+ * but also OpenRouter, a local Ollama, etc.) using JSON mode.
  * Free path: a Groq API key (console.groq.com, no credit card).
  */
 async function openaiCompatParse(query: string): Promise<ScreenFilter> {
@@ -311,28 +327,22 @@ async function openaiCompatParse(query: string): Promise<ScreenFilter> {
     body: JSON.stringify({
       model,
       temperature: 0,
+      response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SYSTEM },
+        { role: "system", content: `${SYSTEM}\n\n${JSON_INSTRUCTION}` },
         { role: "user", content: query },
       ],
-      tools: [
-        {
-          type: "function",
-          function: { name: TOOL_NAME, description: TOOL_DESC, parameters: FILTER_SCHEMA },
-        },
-      ],
-      tool_choice: { type: "function", function: { name: TOOL_NAME } },
     }),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`LLM ${res.status}: ${await res.text()}`);
 
   const json = (await res.json()) as {
-    choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[];
+    choices?: { message?: { content?: string } }[];
   };
-  const args = json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
-  if (!args) throw new Error("LLM did not return a tool call");
-  return normalizeFilter(JSON.parse(args));
+  const content = json.choices?.[0]?.message?.content;
+  if (!content) throw new Error("LLM returned empty content");
+  return normalizeFilter(JSON.parse(content) as Record<string, unknown>);
 }
 
 export async function parseQuery(query: string): Promise<ParseOutcome> {
