@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, "Apple SD Gothic Neo", "Pretendard",
+    "Malgun Gothic", sans-serif;
+}
+
+html,
+body {
+  background: #0b0e14;
+  color: #e6e9ef;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin custom scrollbar for the results column */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #2a3242;
+  border-radius: 4px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
