@@ -6,10 +6,10 @@ import ChartPanel from "@/components/ChartPanel";
 import type { EnrichedStock, ScreenResponse } from "@/lib/types";
 
 const EXAMPLES = [
+  "전일 거래량이 전 거래일 대비 500% 이상 폭증한 뒤 다음날 25% 이하로 급감한 음봉 + 5일선 이격 작고, 최근 두달 안에 거래량 1000만 이상 나온 적 있는 종목",
   "전일 거래량 폭증 후 급감한 음봉 + 5일선 근접",
   "저평가 고배당 코스피 종목",
   "코스닥 반도체 급등주",
-  "거래량 폭증 양봉 급등주",
   "배당수익률 5% 이상 은행주",
 ];
 

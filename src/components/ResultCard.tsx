@@ -45,19 +45,30 @@ export default function ResultCard({ result, selected, onSelect }: Props) {
         </div>
       </div>
 
-      {/* explainability: which conditions this stock satisfied */}
+      {/* explainability: prove each condition is satisfied (✓ actual vs target) */}
       {matched.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {matched.map((m, i) => (
-            <span
-              key={i}
-              className="rounded-md bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-500/20"
-              title={m.label}
-            >
-              {m.actual}
-            </span>
-          ))}
-        </div>
+        <ul className="mt-3 space-y-1">
+          {matched.map((m, i) => {
+            const isSignal = m.label === "신호일";
+            return (
+              <li
+                key={i}
+                className="flex items-center gap-1.5 text-[11px]"
+                title={m.label}
+              >
+                <span className={isSignal ? "text-amber-400" : "text-emerald-400"}>
+                  {isSignal ? "🗓" : "✓"}
+                </span>
+                <span className={isSignal ? "text-amber-300" : "font-medium text-indigo-200"}>
+                  {m.actual}
+                </span>
+                {m.threshold && (
+                  <span className="text-zinc-600">목표 {m.threshold}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       <div className="mt-2 flex gap-3 text-[11px] text-zinc-500">

@@ -81,6 +81,19 @@ export default function ChartPanel({ stock }: Props) {
         })),
       );
 
+      // mark the detected signal day (며칠 전 패턴 발생 지점)
+      if (stock && stock.signalDaysAgo > 0) {
+        candleSeries.setMarkers([
+          {
+            time: stock.signalDate,
+            position: "aboveBar",
+            color: "#eab308",
+            shape: "arrowDown",
+            text: `신호 ${stock.signalDaysAgo}일전`,
+          },
+        ]);
+      }
+
       // 5-day moving average overlay (so "5일선 이격" is visible at a glance)
       const ma5 = data.candles
         .map((c, i, arr) => {
