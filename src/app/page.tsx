@@ -3,6 +3,13 @@
 import { useRef, useState } from "react";
 import ResultCard from "@/components/ResultCard";
 import ChartPanel from "@/components/ChartPanel";
+import {
+  RECENT_VOL_DAYS_DEFAULT,
+  RECENT_VOL_DAYS_MAX,
+  RECENT_VOL_DAYS_MIN,
+  SIGNAL_LOOKBACK_DAYS,
+  approxMonths,
+} from "@/lib/config";
 import type { EnrichedStock, ScreenResponse } from "@/lib/types";
 
 const EXAMPLES = [
@@ -19,6 +26,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<EnrichedStock | null>(null);
+  const [recentDays, setRecentDays] = useState(RECENT_VOL_DAYS_DEFAULT);
+  const [lastQuery, setLastQuery] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   function autoGrow(el: HTMLTextAreaElement) {
@@ -34,9 +43,10 @@ export default function Home() {
     });
   }
 
-  async function run(q: string) {
+  async function run(q: string, days: number = recentDays) {
     const text = q.trim();
     if (!text) return;
+    setLastQuery(text);
     setLoading(true);
     setError(null);
     setSelected(null);
@@ -44,7 +54,7 @@ export default function Home() {
       const res = await fetch("/api/screen", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: text }),
+        body: JSON.stringify({ query: text, recentDays: days }),
       });
       const json = (await res.json()) as ScreenResponse & { error?: string };
       if (json.error) {
@@ -59,6 +69,12 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // "최근 N거래일" 조정 → 마지막 쿼리를 새 윈도우로 재검색
+  function changeRecentDays(days: number) {
+    setRecentDays(days);
+    if (lastQuery) run(lastQuery, days);
   }
 
   return (
@@ -132,6 +148,38 @@ export default function Home() {
         ))}
       </div>
 
+      {/* "최근" window control — makes the vague word quantitative & adjustable */}
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-ink-700 bg-ink-800/40 px-4 py-2.5 text-xs">
+        <span className="text-zinc-400">
+          &ldquo;최근&rdquo; 거래량 기준{" "}
+          <span className="text-zinc-600">(recentMaxVol 윈도우)</span>
+        </span>
+        <input
+          type="range"
+          min={RECENT_VOL_DAYS_MIN}
+          max={RECENT_VOL_DAYS_MAX}
+          step={5}
+          value={recentDays}
+          onChange={(e) => setRecentDays(Number(e.target.value))}
+          onMouseUp={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
+          className="h-1 w-40 cursor-pointer accent-indigo-500"
+        />
+        <span className="font-medium text-white tabular-nums">
+          최근 {recentDays}거래일
+        </span>
+        <span className="text-zinc-500">{approxMonths(recentDays)}</span>
+        {recentDays !== RECENT_VOL_DAYS_DEFAULT && (
+          <button
+            onClick={() => changeRecentDays(RECENT_VOL_DAYS_DEFAULT)}
+            className="text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+          >
+            기본값({RECENT_VOL_DAYS_DEFAULT})
+          </button>
+        )}
+      </div>
+
       {/* interpreted filter banner */}
       {data && (
         <div className="mt-6 rounded-xl border border-ink-600 bg-ink-800/60 p-4">
@@ -162,6 +210,32 @@ export default function Home() {
               <Chip key={i}>{c.label}</Chip>
             ))}
           </div>
+
+          {/* quantitative basis: spell out what the vague words mean */}
+          {(data.filter.conditions.some((c) => c.field === "recentMaxVol") ||
+            data.filter.conditions.some((c) =>
+              ["volSurgeRatio", "volDropRatio", "gap5MAAbs"].includes(c.field),
+            ) ||
+            data.filter.bearish != null) && (
+            <div className="mt-2 border-t border-ink-700 pt-2 text-[11px] text-zinc-500">
+              ⓘ 기준:{" "}
+              {data.filter.conditions.some((c) => c.field === "recentMaxVol") && (
+                <span>
+                  &lsquo;최근&rsquo; = <b className="text-zinc-300">최근 {data.recentDays}거래일</b>(
+                  {approxMonths(data.recentDays)}) 최대 거래량
+                </span>
+              )}
+              {(data.filter.conditions.some((c) =>
+                ["volSurgeRatio", "volDropRatio", "gap5MAAbs"].includes(c.field),
+              ) ||
+                data.filter.bearish != null) && (
+                <span>
+                  {data.filter.conditions.some((c) => c.field === "recentMaxVol") ? " · " : ""}
+                  &lsquo;신호일&rsquo; = 최근 {SIGNAL_LOOKBACK_DAYS}거래일 스캔 중 가장 강한 시점
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

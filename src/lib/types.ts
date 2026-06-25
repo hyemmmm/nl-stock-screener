@@ -84,6 +84,8 @@ export interface ScreenResponse {
   results: ScreenResult[];
   source: "claude" | "groq" | "rules";
   count: number;
+  /** "최근" 거래량 윈도우(거래일) — recentMaxVol 계산에 쓰인 실제 값 */
+  recentDays: number;
 }
 
 export interface Candle {

@@ -1,4 +1,5 @@
-import { getUniverse } from "@/lib/universe";
+import { getUniverse, recentMaxVolFor } from "@/lib/universe";
+import { RECENT_VOL_DAYS_DEFAULT } from "@/lib/config";
 import { formatActual, thresholdLabel } from "@/lib/fields";
 import type {
   Condition,
@@ -49,13 +50,22 @@ function passesConditions(stock: EnrichedStock, conditions: Condition[]): MatchD
   return matched;
 }
 
-export function screen(filter: ScreenFilter): ScreenResult[] {
+export function screen(
+  filter: ScreenFilter,
+  recentDays: number = RECENT_VOL_DAYS_DEFAULT,
+): ScreenResult[] {
   const market = filter.market ?? "ALL";
   const sector = filter.sector?.trim() || null;
+  // Recompute recentMaxVol for the chosen "최근 N거래일" window if it differs.
+  const overrideRecent = recentDays !== RECENT_VOL_DAYS_DEFAULT;
 
   const results: ScreenResult[] = [];
 
-  for (const stock of getUniverse()) {
+  for (const base of getUniverse()) {
+    const stock = overrideRecent
+      ? { ...base, recentMaxVol: recentMaxVolFor(base.code, recentDays) }
+      : base;
+
     if (market !== "ALL" && stock.market !== market) continue;
     if (sector && !stock.sector.includes(sector)) continue;
 

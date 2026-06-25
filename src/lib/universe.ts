@@ -15,12 +15,19 @@ import type { EnrichedStock } from "@/lib/types";
 // ──────────────────────────────────────────────────────────────────────────
 
 let cached: EnrichedStock[] | null = null;
+// Per-code daily volume series (most recent last) so recentMaxVol can be
+// recomputed for any user-chosen "최근 N거래일" window without rebuilding.
+const volSeries = new Map<string, number[]>();
 
 export function getUniverse(): EnrichedStock[] {
   if (cached) return cached;
 
   cached = SNAPSHOT.map((s) => {
     const candles = generateCandles(s.code, s.price);
+    volSeries.set(
+      s.code,
+      candles.map((c) => c.volume),
+    );
     const t = computeTech(candles);
     return {
       ...s,
@@ -40,4 +47,12 @@ export function getUniverse(): EnrichedStock[] {
     };
   });
   return cached;
+}
+
+/** Max volume over the most recent `days` trading days, for a given stock. */
+export function recentMaxVolFor(code: string, days: number): number {
+  const v = volSeries.get(code);
+  if (!v || v.length === 0) return 0;
+  const slice = v.slice(Math.max(0, v.length - days));
+  return slice.reduce((m, x) => (x > m ? x : m), 0);
 }

@@ -1,3 +1,4 @@
+import { RECENT_VOL_DAYS_DEFAULT, SIGNAL_LOOKBACK_DAYS } from "@/lib/config";
 import type { Candle } from "@/lib/types";
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -12,8 +13,8 @@ import type { Candle } from "@/lib/types";
 // deterministic subset of stocks has the pattern injected at a varied offset.
 // ──────────────────────────────────────────────────────────────────────────
 
-const SIGNAL_LOOKBACK = 20; // trading days to scan for a signal day
-const VOL_LOOKBACK = 40; // ~2 months, for "recent max volume"
+const SIGNAL_LOOKBACK = SIGNAL_LOOKBACK_DAYS; // trading days to scan for a signal day
+const VOL_LOOKBACK = RECENT_VOL_DAYS_DEFAULT; // default "최근" window for recentMaxVol
 
 function hash(code: string): number {
   return Array.from(code).reduce((a, c) => a + c.charCodeAt(0), 0);
