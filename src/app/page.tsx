@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ResultCard from "@/components/ResultCard";
 import ChartPanel from "@/components/ChartPanel";
 import type { EnrichedStock, ScreenResponse } from "@/lib/types";
@@ -19,6 +19,20 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<EnrichedStock | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  function autoGrow(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }
+
+  function setQueryAndGrow(value: string) {
+    setQuery(value);
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (el) autoGrow(el);
+    });
+  }
 
   async function run(q: string) {
     const text = q.trim();
@@ -54,34 +68,52 @@ export default function Home() {
           자연어 종목 스크리너
         </h1>
         <p className="mt-2 text-sm text-zinc-400">
-          원하는 조건을 한국어로 입력하면 종목을 찾아줍니다.{" "}
-          <span className="text-zinc-500">
-            예: &ldquo;저평가 고배당 코스닥 중소형주&rdquo;
-          </span>
+          원하는 조건을 한국어로 자유롭게 적어주세요. 여러 줄로 길게 써도 됩니다.
         </p>
       </header>
 
-      {/* search */}
+      {/* prompt-style composer */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           run(query);
         }}
-        className="flex gap-2"
       >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="조건을 자연어로 입력하세요…"
-          className="flex-1 rounded-xl border border-ink-600 bg-ink-800 px-4 py-3 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {loading ? "검색 중…" : "검색"}
-        </button>
+        <div className="rounded-2xl border border-ink-600 bg-ink-800 p-3 transition-colors focus-within:border-indigo-500">
+          <textarea
+            ref={taRef}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              autoGrow(e.target);
+            }}
+            onKeyDown={(e) => {
+              // Enter 전송, Shift+Enter 줄바꿈
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                run(query);
+              }
+            }}
+            rows={2}
+            placeholder={
+              "예) 전일 거래량이 전 거래일 대비 500% 이상 폭증한 뒤\n다음날 거래량이 25% 이하로 급감한 음봉 + 5일선과 이격이 작은 종목"
+            }
+            className="block max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed text-white placeholder:text-zinc-600 outline-none"
+          />
+          <div className="mt-2 flex items-center justify-between px-1">
+            <span className="text-[11px] text-zinc-600">
+              <kbd className="rounded bg-ink-600 px-1 text-zinc-400">Enter</kbd> 전송 ·{" "}
+              <kbd className="rounded bg-ink-600 px-1 text-zinc-400">Shift+Enter</kbd> 줄바꿈
+            </span>
+            <button
+              type="submit"
+              disabled={loading || !query.trim()}
+              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-40"
+            >
+              {loading ? "검색 중…" : "검색"}
+            </button>
+          </div>
+        </div>
       </form>
 
       {/* example chips */}
@@ -90,7 +122,7 @@ export default function Home() {
           <button
             key={ex}
             onClick={() => {
-              setQuery(ex);
+              setQueryAndGrow(ex);
               run(ex);
             }}
             className="rounded-full border border-ink-600 bg-ink-800 px-3 py-1 text-xs text-zinc-400 transition-colors hover:border-ink-500 hover:text-zinc-200"
