@@ -1,4 +1,5 @@
 import { SNAPSHOT } from "@/data/snapshot";
+import { generateCandles } from "@/lib/candles";
 import type { Candle } from "@/lib/types";
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -106,57 +107,6 @@ async function fetchKisCandles(code: string): Promise<Candle[]> {
     .sort((a, b) => a.time.localeCompare(b.time));
 }
 
-// ── Deterministic mock candles ─────────────────────────────────────────────
-// Seeded random walk so a given code always renders the same chart.
-
-function seededRandom(seed: number): () => number {
-  let s = seed % 2147483647;
-  if (s <= 0) s += 2147483646;
-  return () => {
-    s = (s * 16807) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
-}
-
-function mockCandles(code: string, basePrice: number): Candle[] {
-  const seed = Array.from(code).reduce((a, c) => a + c.charCodeAt(0), 0) + basePrice;
-  const rnd = seededRandom(seed);
-  const candles: Candle[] = [];
-  const days = 120;
-
-  // Walk backwards from today so the last candle ≈ current price.
-  let price = basePrice;
-  const series: number[] = [];
-  for (let i = 0; i < days; i++) {
-    series.push(price);
-    const drift = (rnd() - 0.48) * 0.03; // slight variability
-    price = price / (1 + drift);
-  }
-  series.reverse();
-
-  const today = new Date();
-  for (let i = 0; i < days; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - (days - 1 - i));
-    if (d.getDay() === 0 || d.getDay() === 6) continue; // skip weekends
-
-    const close = Math.round(series[i]);
-    const open = Math.round(close * (1 + (rnd() - 0.5) * 0.02));
-    const high = Math.round(Math.max(open, close) * (1 + rnd() * 0.015));
-    const low = Math.round(Math.min(open, close) * (1 - rnd() * 0.015));
-    const volume = Math.round(100000 + rnd() * 2000000);
-    candles.push({
-      time: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
-  }
-  return candles;
-}
-
 export interface ChartData {
   candles: Candle[];
   source: "kis" | "mock";
@@ -173,5 +123,5 @@ export async function getCandles(code: string): Promise<ChartData> {
   }
   const stock = SNAPSHOT.find((s) => s.code === code);
   const base = stock?.price ?? 50000;
-  return { candles: mockCandles(code, base), source: "mock" };
+  return { candles: generateCandles(code, base), source: "mock" };
 }
