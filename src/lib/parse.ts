@@ -4,7 +4,7 @@ import type { Condition, NumericField, Op, ScreenFilter } from "@/lib/types";
 
 export interface ParseOutcome {
   filter: ScreenFilter;
-  source: "claude" | "rules";
+  source: "claude" | "groq" | "rules";
 }
 
 const VALID_FIELDS: NumericField[] = [
@@ -159,15 +159,17 @@ function ruleBasedParse(query: string): ScreenFilter {
   return filter;
 }
 
-// ── Claude parser ──────────────────────────────────────────────────────────
+// ── LLM parsers (Claude or any OpenAI-compatible backend like Groq) ─────────
 
-const FILTER_TOOL: Anthropic.Tool = {
-  name: "build_filter",
-  description:
-    "Convert a Korean natural-language stock screening request into a structured filter.",
-  input_schema: {
-    type: "object",
-    properties: {
+const TOOL_NAME = "build_filter";
+const TOOL_DESC =
+  "Convert a Korean natural-language stock screening request into a structured filter.";
+
+// JSON Schema for the filter — shared by the Anthropic tool and the
+// OpenAI-compatible (Groq) function-calling tool.
+const FILTER_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
       market: { type: "string", enum: ["KOSPI", "KOSDAQ", "ALL"] },
       sector: {
         type: ["string", "null"],
@@ -212,7 +214,6 @@ const FILTER_TOOL: Anthropic.Tool = {
       },
     },
     required: ["market", "conditions", "rationale"],
-  },
 };
 
 const SYSTEM = `너는 한국 주식 스크리너의 자연어 파서다.
@@ -236,25 +237,8 @@ const SYSTEM = `너는 한국 주식 스크리너의 자연어 파서다.
 참고: volSurgeRatio/volDropRatio/bearish/gap5MAAbs는 서버가 최근 약 20거래일을 스캔해 '신호일'을 찾아 그 시점 기준으로 평가한다(며칠 전 발생도 잡힘). 너는 조건만 만들면 된다.
 명확한 숫자가 있으면 그대로 사용한다. 반드시 build_filter 도구를 호출한다.`;
 
-async function claudeParse(query: string): Promise<ScreenFilter> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const resp = await client.messages.create({
-    // Sonnet handles compound technical conditions (폭증→급감+음봉+이격) more
-    // reliably than Haiku; parsing is short so the cost difference is small.
-    model: "claude-sonnet-4-6",
-    max_tokens: 1024,
-    system: SYSTEM,
-    tools: [FILTER_TOOL],
-    tool_choice: { type: "tool", name: "build_filter" },
-    messages: [{ role: "user", content: query }],
-  });
-
-  const toolUse = resp.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Claude did not return a tool call");
-  }
-  const input = toolUse.input as Record<string, unknown>;
-
+/** Validate & coerce the raw tool-call JSON (from any LLM) into a ScreenFilter. */
+function normalizeFilter(input: Record<string, unknown>): ScreenFilter {
   const conditions = Array.isArray(input.conditions)
     ? input.conditions.map(coerceCondition).filter((c): c is Condition => c !== null)
     : [];
@@ -282,13 +266,89 @@ async function claudeParse(query: string): Promise<ScreenFilter> {
   };
 }
 
+async function claudeParse(query: string): Promise<ScreenFilter> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const resp = await client.messages.create({
+    // Sonnet handles compound technical conditions (폭증→급감+음봉+이격) more
+    // reliably than Haiku; parsing is short so the cost difference is small.
+    model: "claude-sonnet-4-6",
+    max_tokens: 1024,
+    system: SYSTEM,
+    tools: [
+      {
+        name: TOOL_NAME,
+        description: TOOL_DESC,
+        input_schema: FILTER_SCHEMA as unknown as Anthropic.Tool.InputSchema,
+      },
+    ],
+    tool_choice: { type: "tool", name: TOOL_NAME },
+    messages: [{ role: "user", content: query }],
+  });
+
+  const toolUse = resp.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error("Claude did not return a tool call");
+  }
+  return normalizeFilter(toolUse.input as Record<string, unknown>);
+}
+
+/**
+ * Parse via any OpenAI-compatible chat-completions endpoint (Groq by default,
+ * but also OpenRouter, a local Ollama, etc.) using function calling.
+ * Free path: a Groq API key (console.groq.com, no credit card).
+ */
+async function openaiCompatParse(query: string): Promise<ScreenFilter> {
+  const baseUrl = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
+  const model = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
+  const apiKey = process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: query },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: { name: TOOL_NAME, description: TOOL_DESC, parameters: FILTER_SCHEMA },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: TOOL_NAME } },
+    }),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`LLM ${res.status}: ${await res.text()}`);
+
+  const json = (await res.json()) as {
+    choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[];
+  };
+  const args = json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+  if (!args) throw new Error("LLM did not return a tool call");
+  return normalizeFilter(JSON.parse(args));
+}
+
 export async function parseQuery(query: string): Promise<ParseOutcome> {
+  // Priority: Claude (if key) → Groq/OpenAI-compatible (if key) → rule fallback.
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      const filter = await claudeParse(query);
-      return { filter, source: "claude" };
+      return { filter: await claudeParse(query), source: "claude" };
     } catch (err) {
-      console.error("[parse] Claude failed, falling back to rules:", err);
+      console.error("[parse] Claude failed, falling back:", err);
+    }
+  }
+  if (process.env.GROQ_API_KEY || process.env.LLM_API_KEY) {
+    try {
+      return { filter: await openaiCompatParse(query), source: "groq" };
+    } catch (err) {
+      console.error("[parse] Groq/LLM failed, falling back to rules:", err);
     }
   }
   return { filter: ruleBasedParse(query), source: "rules" };

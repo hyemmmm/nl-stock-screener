@@ -82,7 +82,7 @@ export interface ScreenResult {
 export interface ScreenResponse {
   filter: ScreenFilter;
   results: ScreenResult[];
-  source: "claude" | "rules";
+  source: "claude" | "groq" | "rules";
   count: number;
 }
 

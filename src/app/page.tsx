@@ -138,12 +138,16 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span
               className={`rounded-full px-2 py-0.5 font-medium ${
-                data.source === "claude"
-                  ? "bg-emerald-500/15 text-emerald-300"
-                  : "bg-amber-500/15 text-amber-300"
+                data.source === "rules"
+                  ? "bg-amber-500/15 text-amber-300"
+                  : "bg-emerald-500/15 text-emerald-300"
               }`}
             >
-              {data.source === "claude" ? "Claude 해석" : "규칙 기반 해석"}
+              {data.source === "claude"
+                ? "Claude 해석"
+                : data.source === "groq"
+                  ? "Llama(Groq) 해석"
+                  : "규칙 기반 해석"}
             </span>
             <span className="text-zinc-300">{data.filter.rationale}</span>
           </div>

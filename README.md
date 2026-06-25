@@ -71,14 +71,14 @@
 - **Next.js 14 (App Router) + TypeScript** — 프론트 + API 라우트 단일 레포
 - **Tailwind CSS** — 증권 앱 느낌의 다크 UI (한국식: 상승=빨강, 하락=파랑)
 - **TradingView Lightweight Charts** — 캔들 + 거래량 차트
-- **Anthropic Claude API** — 자연어 → 필터 JSON (tool use로 구조화 출력 강제)
+- **LLM 파서** — 자연어 → 필터 JSON (function/tool calling으로 구조화 출력 강제). **Anthropic Claude** 또는 **Groq(무료, Llama 3.3 70B)** 등 OpenAI 호환 백엔드 교체 가능
 - **KIS Open API** — 시세 / 일봉 (서버에서만 호출)
 
 ## 키 없이 바로 실행 (Mock 모드)
 
 키가 하나도 없어도 동작하도록 설계했습니다:
 
-- `ANTHROPIC_API_KEY` 없음 → **규칙 기반 한국어 파서**가 대신 동작 (저평가/고배당/코스닥/중소형주 등 키워드 인식)
+- LLM 키 없음 → **규칙 기반 한국어 파서**가 대신 동작 (저평가/고배당/코스닥/중소형주 등 키워드 인식). 단, 슬랭·의역엔 약하므로 자유로운 자연어를 원하면 LLM 키를 권장.
 - `KIS_APP_KEY` 없음 → 종목별 **결정론적 mock 캔들** 생성 (같은 종목은 항상 같은 차트)
 
 ```bash
@@ -94,13 +94,16 @@ cp .env.example .env.local
 # .env.local 에 키 입력
 ```
 
-| 변수 | 발급처 | 없을 때 |
-| --- | --- | --- |
-| `ANTHROPIC_API_KEY` | https://console.anthropic.com | 규칙 기반 파서 사용 |
-| `KIS_APP_KEY` / `KIS_APP_SECRET` | https://apiportal.koreainvestment.com (모의투자 추천) | mock 캔들 사용 |
-| `KIS_USE_SIMULATION` | `true`=모의투자, `false`=실전 | `true` |
+| 변수 | 발급처 | 비용 | 없을 때 |
+| --- | --- | --- | --- |
+| `GROQ_API_KEY` | https://console.groq.com | **무료**(카드 불필요) | — |
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com | 유료(소액) | Groq→규칙 순으로 폴백 |
+| `KIS_APP_KEY` / `KIS_APP_SECRET` | https://apiportal.koreainvestment.com (모의투자 추천) | 무료 | mock 캔들 사용 |
+| `KIS_USE_SIMULATION` | `true`=모의투자, `false`=실전 | — | `true` |
 
-키를 채우면 코드 변경 없이 자동으로 Claude 해석 + KIS 실시간 차트로 전환됩니다. 화면 상단/차트 우측의 배지(`Claude 해석` / `KIS 실시간`)로 현재 모드를 확인할 수 있습니다.
+**파서 우선순위:** `ANTHROPIC_API_KEY` > `GROQ_API_KEY` > 규칙 폴백. 즉 **Groq 무료 키 + KIS 무료 키**만으로 비용 0원에 "실데이터 + 자유로운 자연어"가 됩니다. `LLM_BASE_URL`/`LLM_MODEL`로 OpenRouter·로컬 Ollama 등 OpenAI 호환 백엔드로 바꿀 수 있습니다.
+
+키를 채우면 코드 변경 없이 자동 전환되고, 화면 배지(`Claude 해석` / `Llama(Groq) 해석` / `규칙 기반` · `KIS 실시간` / `MOCK`)로 현재 모드를 확인할 수 있습니다.
 
 ## 프로젝트 구조
 
