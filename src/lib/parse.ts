@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { makeLabel } from "@/lib/fields";
 import type { Condition, NumericField, Op, ScreenFilter } from "@/lib/types";
 
 export interface ParseOutcome {
@@ -15,31 +16,12 @@ const VALID_FIELDS: NumericField[] = [
   "price",
   "changePct",
   "volume",
+  "volSurgeRatio",
+  "volDropRatio",
+  "gap5MAAbs",
+  "tradingValue",
 ];
 const VALID_OPS: Op[] = ["<", "<=", ">", ">=", "=="];
-
-const FIELD_LABEL: Record<NumericField, string> = {
-  per: "PER",
-  pbr: "PBR",
-  dividendYield: "배당수익률",
-  marketCap: "시가총액",
-  roe: "ROE",
-  price: "주가",
-  changePct: "등락률",
-  volume: "거래량",
-};
-
-function unitFor(field: NumericField): string {
-  if (field === "marketCap") return "억";
-  if (field === "dividendYield" || field === "roe" || field === "changePct") return "%";
-  if (field === "volume") return "주";
-  if (field === "price") return "원";
-  return "";
-}
-
-function makeLabel(field: NumericField, op: Op, value: number): string {
-  return `${FIELD_LABEL[field]} ${op} ${value.toLocaleString()}${unitFor(field)}`;
-}
 
 /** Coerce arbitrary AI/string output into a safe Condition, or drop it. */
 function coerceCondition(raw: unknown): Condition | null {
@@ -92,6 +74,26 @@ const RULES: Rule[] = [
   { test: /급등|상승|오른|강세/i, apply: (f) => addCond(f, "changePct", ">", 3) },
   { test: /급락|하락|내린|약세/i, apply: (f) => addCond(f, "changePct", "<", -2) },
   { test: /거래량\s*많|대량거래|활발/i, apply: (f) => addCond(f, "volume", ">", 1000000) },
+
+  // ── technical / candle patterns ──
+  // 전일 거래량 폭증 (전전일 대비 ≥500%)
+  { test: /거래량\s*폭증|거래량\s*급증|폭증|거래량\s*터/i, apply: (f) => addCond(f, "volSurgeRatio", ">", 500) },
+  // 다음날 거래량 급감 (전일 대비 ≤25%) — sort ascending so the lowest(best) float up
+  {
+    test: /거래량\s*급감|거래량\s*감소|거래량\s*죽|급감/i,
+    apply: (f) => {
+      addCond(f, "volDropRatio", "<", 25);
+      f.sortBy = { field: "volDropRatio", dir: "asc" };
+    },
+  },
+  // 음봉 / 양봉
+  { test: /음봉|음전|빨간\s*거\s*아니/i, apply: (f) => (f.bearish = true) },
+  { test: /양봉/i, apply: (f) => (f.bearish = false) },
+  // 5일선 근접 / 이격 작음
+  {
+    test: /5일선|오일선|이격\s*(작|적|좁|크지\s*않)|5일\s*이동평균|맞닿|단기\s*이평\s*근접/i,
+    apply: (f) => addCond(f, "gap5MAAbs", "<", 3),
+  },
 ];
 
 const SECTORS = [
@@ -123,12 +125,23 @@ function ruleBasedParse(query: string): ScreenFilter {
     const op: Op = /이하|미만/.test(divMatch[2] ?? "") ? "<" : ">";
     addCond(filter, "dividendYield", op, v);
   }
+  // 이격 N% 이하 / 5일선 N%
+  const gapMatch = query.match(/이격\D*(\d+(?:\.\d+)?)\s*%?\s*(이하|미만|이내)?/);
+  if (gapMatch) addCond(filter, "gap5MAAbs", "<", Number(gapMatch[1]));
+  // 거래량 N% (이상 → 폭증, 이하 → 급감)
+  const volPctMatch = query.match(/거래량\D*(\d{2,4})\s*%\s*(이상|초과|이하|미만)?/);
+  if (volPctMatch) {
+    const v = Number(volPctMatch[1]);
+    if (/이하|미만/.test(volPctMatch[2] ?? "")) addCond(filter, "volDropRatio", "<", v);
+    else addCond(filter, "volSurgeRatio", ">", v);
+  }
 
-  filter.rationale = `규칙 기반 해석: ${
-    filter.conditions.map((c) => c.label).join(", ") || "조건 없음"
-  }${filter.market !== "ALL" ? ` · ${filter.market}` : ""}${
-    filter.sector ? ` · ${filter.sector}` : ""
-  }`;
+  const parts = filter.conditions.map((c) => c.label);
+  if (filter.bearish === true) parts.push("음봉");
+  if (filter.bearish === false) parts.push("양봉");
+  filter.rationale = `규칙 기반 해석: ${parts.join(", ") || "조건 없음"}${
+    filter.market !== "ALL" ? ` · ${filter.market}` : ""
+  }${filter.sector ? ` · ${filter.sector}` : ""}`;
   return filter;
 }
 
@@ -156,13 +169,20 @@ const FILTER_TOOL: Anthropic.Tool = {
               type: "string",
               enum: VALID_FIELDS,
               description:
-                "marketCap is in 억원 (e.g. 5000억 = 5000). dividendYield/roe/changePct are percents.",
+                "marketCap/tradingValue are in 억원 (5000억 = 5000). dividendYield/roe/changePct/" +
+                "volSurgeRatio/volDropRatio/gap5MAAbs are percents. " +
+                "volSurgeRatio=전일거래량/전전일거래량×100, volDropRatio=당일거래량/전일거래량×100, " +
+                "gap5MAAbs=|5일이동평균 이격도|.",
             },
             op: { type: "string", enum: VALID_OPS },
             value: { type: "number" },
           },
           required: ["field", "op", "value"],
         },
+      },
+      bearish: {
+        type: ["boolean", "null"],
+        description: "음봉만 보려면 true, 양봉만 false, 무관하면 null.",
       },
       sortBy: {
         type: ["object", "null"],
@@ -183,17 +203,29 @@ const FILTER_TOOL: Anthropic.Tool = {
 
 const SYSTEM = `너는 한국 주식 스크리너의 자연어 파서다.
 사용자의 한국어 요청을 build_filter 도구의 인자로 변환한다.
+
+[펀더멘털]
 - 저평가 → PER<10 또는 PBR<1
 - 고배당 → 배당수익률>4
 - 우량/수익성 좋은 → ROE>10
 - 대형주 → 시가총액>100000(억), 중소형주 → <50000(억)
 - 급등 → 등락률>3, 급락 → 등락률<-2
+
+[기술적/캔들 패턴]
+- (전일) 거래량 폭증 → volSurgeRatio>500 (사용자가 500~1000% 등 명시하면 그 값 사용)
+- (이후) 거래량 급감 → volDropRatio<25 (12% 미만이 더 좋다고 하면 그래도 25 이하로 잡되 sortBy를 volDropRatio asc로)
+- 음봉 → bearish=true, 양봉 → bearish=false
+- 5일선 이격이 작다/맞닿는다/근접 → gap5MAAbs<3
+- "거래량 폭증 후 급감" 같이 두 단계면 volSurgeRatio와 volDropRatio 조건을 모두 넣는다.
+
 명확한 숫자가 있으면 그대로 사용한다. 반드시 build_filter 도구를 호출한다.`;
 
 async function claudeParse(query: string): Promise<ScreenFilter> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const resp = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    // Sonnet handles compound technical conditions (폭증→급감+음봉+이격) more
+    // reliably than Haiku; parsing is short so the cost difference is small.
+    model: "claude-sonnet-4-6",
     max_tokens: 1024,
     system: SYSTEM,
     tools: [FILTER_TOOL],
@@ -227,6 +259,7 @@ async function claudeParse(query: string): Promise<ScreenFilter> {
     market,
     sector: typeof input.sector === "string" ? input.sector : null,
     conditions,
+    bearish: typeof input.bearish === "boolean" ? input.bearish : null,
     sortBy,
     limit: typeof input.limit === "number" ? input.limit : undefined,
     rationale: typeof input.rationale === "string" ? input.rationale : undefined,
