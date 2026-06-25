@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ChartResponse, Stock } from "@/lib/types";
+import type { ChartResponse, EnrichedStock } from "@/lib/types";
 
 interface Props {
-  stock: Stock | null;
+  stock: EnrichedStock | null;
 }
 
 export default function ChartPanel({ stock }: Props) {
@@ -80,6 +80,22 @@ export default function ChartPanel({ stock }: Props) {
           close: c.close,
         })),
       );
+
+      // 5-day moving average overlay (so "5일선 이격" is visible at a glance)
+      const ma5 = data.candles
+        .map((c, i, arr) => {
+          if (i < 4) return null;
+          const avg = arr.slice(i - 4, i + 1).reduce((s, x) => s + x.close, 0) / 5;
+          return { time: c.time, value: Math.round(avg) };
+        })
+        .filter((v): v is { time: string; value: number } => v !== null);
+      const ma5Series = chart.addLineSeries({
+        color: "#eab308",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      ma5Series.setData(ma5);
 
       const volSeries = chart.addHistogramSeries({
         priceFormat: { type: "volume" },
@@ -162,6 +178,20 @@ export default function ChartPanel({ stock }: Props) {
           </div>
         )}
         <div ref={containerRef} className="h-[360px] w-full" />
+      </div>
+
+      <div className="mt-2 flex items-center gap-4 text-[11px] text-zinc-500">
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-0.5 w-3 bg-yellow-500" /> 5일 이동평균
+        </span>
+        <span>
+          5일선 이격{" "}
+          <span className={stock.gap5MAAbs <= 3 ? "text-emerald-400" : "text-zinc-400"}>
+            {stock.gap5MA >= 0 ? "+" : ""}
+            {stock.gap5MA.toFixed(1)}%
+          </span>
+        </span>
+        <span>당일 {stock.bearish ? "음봉 🔵" : "양봉 🔴"}</span>
       </div>
     </div>
   );

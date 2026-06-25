@@ -3,14 +3,14 @@
 import { useState } from "react";
 import ResultCard from "@/components/ResultCard";
 import ChartPanel from "@/components/ChartPanel";
-import type { ScreenResponse, Stock } from "@/lib/types";
+import type { EnrichedStock, ScreenResponse } from "@/lib/types";
 
 const EXAMPLES = [
+  "전일 거래량 폭증 후 급감한 음봉 + 5일선 근접",
   "저평가 고배당 코스피 종목",
-  "PER 10 이하 우량주",
   "코스닥 반도체 급등주",
+  "거래량 폭증 양봉 급등주",
   "배당수익률 5% 이상 은행주",
-  "시가총액 큰 2차전지",
 ];
 
 export default function Home() {
@@ -18,7 +18,7 @@ export default function Home() {
   const [data, setData] = useState<ScreenResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Stock | null>(null);
+  const [selected, setSelected] = useState<EnrichedStock | null>(null);
 
   async function run(q: string) {
     const text = q.trim();
@@ -120,6 +120,8 @@ export default function Home() {
               <Chip>{data.filter.market}</Chip>
             )}
             {data.filter.sector && <Chip>{data.filter.sector}</Chip>}
+            {data.filter.bearish === true && <Chip>음봉</Chip>}
+            {data.filter.bearish === false && <Chip>양봉</Chip>}
             {data.filter.conditions.map((c, i) => (
               <Chip key={i}>{c.label}</Chip>
             ))}
