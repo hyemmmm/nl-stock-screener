@@ -36,9 +36,11 @@ function parseRankPage(txt: string): Omit<Mover, "tags" | "news">[] {
     const start = m.index ?? 0;
     const end = k + 1 < anchors.length ? (anchors[k + 1].index ?? txt.length) : start + 700;
     const chunk = txt.slice(start, end);
-    const nums = [...chunk.matchAll(/<td class="number"[^>]*>([\s\S]*?)<\/td>/g)].map((x) =>
-      x[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
-    );
+    // 상한가 페이지는 전일비·등락률 칸이 class="rate_up|rate_down"라 number만 잡으면 열이 밀린다.
+    // rate 칸까지 포함해야 두 페이지 모두 [현재가, 전일비, 등락률, 거래량, ...] 순서로 정렬된다.
+    const nums = [
+      ...chunk.matchAll(/<td class="(?:number|rate_up|rate_down)"[^>]*>([\s\S]*?)<\/td>/g),
+    ].map((x) => x[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
     if (nums.length < 4) continue;
     const close = parseInt(nums[0].replace(/[^\d]/g, ""), 10);
     const chg = chunk.match(/([+\-][\d.]+)\s*%/);
@@ -115,6 +117,7 @@ export async function getMovers(): Promise<MoversResult> {
     const cur = byCode.get(r.code);
     if (cur) {
       if (!cur.tags.includes(tag)) cur.tags.push(tag);
+      if (r.volume > cur.volume) cur.volume = r.volume; // 두 페이지 중 큰 거래량 채택
     } else {
       byCode.set(r.code, { ...r, tags: [tag], news: [] });
     }
