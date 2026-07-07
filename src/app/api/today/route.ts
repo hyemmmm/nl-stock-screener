@@ -8,8 +8,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const result = await getDailyIssues();
-    await recordPrediction(result).catch(() => {}); // 기록 실패해도 응답은 정상
-    return NextResponse.json({ since: result.since, issues: result.issues });
+    const recorded = await recordPrediction(result).catch(() => false); // 기록 실패해도 응답은 정상
+    return NextResponse.json({
+      since: result.since,
+      date: result.date,
+      recorded,
+      issues: result.issues,
+    });
   } catch (err) {
     console.error("[/api/today]", err);
     return NextResponse.json({ error: "이슈를 불러오지 못했습니다" }, { status: 500 });

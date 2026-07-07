@@ -7,6 +7,7 @@ import type { DailyIssue } from "@/lib/issues";
 export default function TodayPage() {
   const [issues, setIssues] = useState<DailyIssue[] | null>(null);
   const [since, setSince] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ date: string; recorded: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,6 +18,8 @@ export default function TodayPage() {
       const res = await fetch("/api/today", { cache: "no-store" });
       const json = (await res.json()) as {
         since?: string;
+        date?: string;
+        recorded?: boolean;
         issues?: DailyIssue[];
         error?: string;
       };
@@ -24,6 +27,7 @@ export default function TodayPage() {
       else {
         setSince(json.since ?? null);
         setIssues(json.issues ?? []);
+        if (json.date) setSaved({ date: json.date, recorded: !!json.recorded });
       }
     } catch {
       setError("불러오기 실패");
@@ -71,6 +75,26 @@ export default function TodayPage() {
           </button>
         </div>
       </header>
+
+      {saved && issues && (
+        <div className="mb-5 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
+          <span>✓</span>
+          <span>
+            {saved.recorded ? (
+              <>
+                오늘({saved.date.slice(4, 6)}/{saved.date.slice(6, 8)}) 예측이 성적표에 기록됐어요.
+              </>
+            ) : (
+              <>
+                오늘({saved.date.slice(4, 6)}/{saved.date.slice(6, 8)}) 예측은 이미 기록돼 있어요.
+              </>
+            )}{" "}
+            <Link href="/track" className="underline underline-offset-2 hover:text-emerald-200">
+              성적표에서 채점 결과 보기 →
+            </Link>
+          </span>
+        </div>
+      )}
 
       {loading && !issues && (
         <div className="rounded-2xl border border-ink-600 bg-ink-800 p-10 text-center text-sm text-zinc-500">

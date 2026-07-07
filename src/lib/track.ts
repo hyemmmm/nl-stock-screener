@@ -45,9 +45,10 @@ async function readPredictions(): Promise<PredRecord[]> {
 }
 
 // 하루 1건만 기록 — 같은 date가 이미 있으면 skip(웹 새로고침 중복 방지).
-export async function recordPrediction(res: DailyIssuesResult): Promise<void> {
+// 새로 기록했으면 true, 이미 오늘 것이 있어 skip했으면 false.
+export async function recordPrediction(res: DailyIssuesResult): Promise<boolean> {
   const preds = await readPredictions();
-  if (preds.some((p) => p.date === res.date)) return;
+  if (preds.some((p) => p.date === res.date)) return false;
   const rec: PredRecord = {
     date: res.date,
     baselineDate: res.baselineDate,
@@ -62,6 +63,7 @@ export async function recordPrediction(res: DailyIssuesResult): Promise<void> {
   };
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.appendFile(PRED_FILE, JSON.stringify(rec) + "\n", "utf8");
+  return true;
 }
 
 // ── 채점 ──────────────────────────────────────────────────────────────────
