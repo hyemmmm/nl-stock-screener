@@ -36,3 +36,8 @@ yarn-error.log*
 
 # backtester data cache
 scripts/.bt-cache.json
+scripts/.yz-price-cache.json
+scripts/.yz-events-cache.json
+scripts/corpcode.zip
+scripts/corpcode_x/
+scripts/.corpmap.json
