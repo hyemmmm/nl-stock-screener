@@ -134,8 +134,16 @@ export interface DailyIssue {
 
 export interface DailyIssuesResult {
   since: string; // "7/7 15:30" — 이 시각(장마감) 이후 뉴스만 반영
+  date: string; // 예측 생성일(KST) YYYYMMDD — 하루 1건 기록 키
+  baselineDate: string; // 수익률 기준일(직전 마감) YYYYMMDD
   issues: DailyIssue[];
 }
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const ymdKST = (ms: number) => {
+  const d = new Date(ms + 9 * 3600e3);
+  return `${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}`;
+};
 
 export async function getDailyIssues(): Promise<DailyIssuesResult> {
   const cutoff = lastMarketCloseMs();
@@ -144,6 +152,8 @@ export async function getDailyIssues(): Promise<DailyIssuesResult> {
 
   const c = new Date(cutoff + 9 * 3600e3);
   const since = `${c.getUTCMonth() + 1}/${c.getUTCDate()} 15:30`;
+  const baselineDate = ymdKST(cutoff);
+  const date = ymdKST(Date.now());
 
   const system = `너는 한국 주식 애널리스트다. 아래는 직전 장마감(${since}) 이후 나온 "일반 뉴스 헤드라인"이다.
 네가 할 일: 뉴스 속 "현실에서 벌어진 사건"을 보고, 내일 국내 증시에서 특정 업종·테마 주식을 움직일 핵심 이슈 2개를 고른다.
@@ -174,5 +184,5 @@ export async function getDailyIssues(): Promise<DailyIssuesResult> {
       };
     }),
   );
-  return { since, issues };
+  return { since, date, baselineDate, issues };
 }

@@ -3,7 +3,7 @@
 //  뉴스(구글뉴스 RSS·무키) → Groq LLM이 이슈 선정+테마 매칭 → 네이버 테마 관련주.
 //  실행: node scripts/daily-issues.mjs
 // ────────────────────────────────────────────────────────────────────────
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
 
 const GROQ = readFileSync(".env.local", "utf8").match(/GROQ_API_KEY=(\S+)/)[1];
 const dec = (buf) => new TextDecoder("euc-kr").decode(Buffer.from(buf));
@@ -130,19 +130,43 @@ async function main() {
   console.log("🤖 Groq가 핵심 이슈 2개 선정 + 테마 매칭…\n");
   const res = await groqJSON(system, user);
 
+  const issues = [];
   for (const iss of (res.issues || []).slice(0, 2)) {
     const th = themes.find((t) => t.no === String(iss.theme_no));
+    const stocks = th ? (await fetchStocks(th.no)).slice(0, 12) : [];
     console.log("━".repeat(60));
     console.log(`◎ 이슈: ${iss.title}`);
     console.log(`   → ${iss.why}`);
     console.log(`◎ 관련 테마: ${iss.theme_name}${th ? ` (오늘 ${th.chg > 0 ? "+" : ""}${th.chg}%)` : ""}`);
-    if (th) {
-      const stocks = await fetchStocks(th.no);
-      console.log(`◎ 관련주 ${stocks.length}개: ${stocks.slice(0, 12).map((s) => s.name).join(", ")}`);
-    } else {
-      console.log("   (테마 매칭 실패 — Groq가 목록 밖 no를 냄)");
-    }
+    console.log(
+      th ? `◎ 관련주 ${stocks.length}개: ${stocks.map((s) => s.name).join(", ")}` : "   (테마 매칭 실패 — Groq가 목록 밖 no를 냄)",
+    );
     console.log("");
+    issues.push({
+      title: iss.title,
+      why: iss.why,
+      themeName: iss.theme_name || th?.name || "",
+      themeChg: th ? th.chg : null,
+      stocks: stocks.map((s) => ({ code: s.code, name: s.name })),
+    });
+  }
+
+  // 예측 기록 (하루 1건, 성적표 채점용) — data/predictions.jsonl
+  const ymd = (ms) => {
+    const d = new Date(ms + 9 * 3600e3);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}`;
+  };
+  const date = ymd(Date.now());
+  const dir = "data", file = `${dir}/predictions.jsonl`;
+  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  if (existing.includes(`"date":"${date}"`)) {
+    console.log(`ℹ️  오늘(${date}) 예측은 이미 기록됨 — skip`);
+  } else {
+    mkdirSync(dir, { recursive: true });
+    const rec = { date, baselineDate: ymd(cutoff), predAt: new Date().toISOString(), issues };
+    appendFileSync(file, JSON.stringify(rec) + "\n", "utf8");
+    console.log(`✅ 예측 기록됨 → ${file} (성적표에서 며칠 뒤 채점)`);
   }
 }
 

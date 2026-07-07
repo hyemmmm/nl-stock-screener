@@ -41,3 +41,7 @@ scripts/.yz-events-cache.json
 scripts/corpcode.zip
 scripts/corpcode_x/
 scripts/.corpmap.json
+
+# 예측 기록/채점 데이터 (로컬에 forward-accumulate)
+/data/*.jsonl
+/data/scored.json
