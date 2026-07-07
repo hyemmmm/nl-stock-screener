@@ -22,7 +22,8 @@ function lastMarketCloseMs() {
 async function fetchNews(cutoffMs) {
   const items = [];
   const seen = new Set();
-  for (const t of ["BUSINESS", "NATION", "WORLD"]) {
+  // 일반 뉴스 위주 — 증시 자체(BUSINESS)보다 현실 사건(정치·국제·기술·과학·산업)에서 재료를 찾는다.
+  for (const t of ["NATION", "WORLD", "TECHNOLOGY", "SCIENCE", "HEALTH", "BUSINESS"]) {
     try {
       const txt = await (
         await fetch(`https://news.google.com/rss/headlines/section/topic/${t}?hl=ko&gl=KR&ceid=KR:ko`)
@@ -113,12 +114,17 @@ async function main() {
   console.log(`   헤드라인 ${news.length} · 테마 ${themes.length}\n`);
 
   const themeList = themes.map((t) => `${t.no}:${t.name}`).join(", ");
-  const system = `너는 한국 주식 애널리스트다. 아래 헤드라인들은 모두 "직전 장마감(${since}) 이후"에 나온 뉴스로, 내일 장에 새로 반영될 재료다.
-이 중에서 "내일 국내 증시에 재료(테마)로 작용할 핵심 이슈 2개"를 고른다.
-각 이슈에 대해, 제공된 [테마목록]에서 가장 관련 깊은 테마를 no로 정확히 하나 매칭한다(목록에 없는 테마는 만들지 마라).
-★ 두 이슈는 반드시 서로 다른 주제 + 서로 다른 테마(no)여야 한다. 같은 섹터(예: 반도체)로 2개를 채우지 마라.
+  const system = `너는 한국 주식 애널리스트다. 아래는 직전 장마감(${since}) 이후 나온 "일반 뉴스 헤드라인"이다.
+네가 할 일: 뉴스 속 "현실에서 벌어진 사건"을 보고, 내일 국내 증시에서 특정 업종·테마 주식을 움직일 핵심 이슈 2개를 고른다.
+
+★ 이슈 = 현실 사건이어야 한다. 예) 정부 정책·규제·예산, 신기술/신제품 발표, 국제 분쟁·외교·제재, 유가·원자재·환율을 움직인 사건, 대형 수주·계약·M&A, 자연재해·기후·질병, 대형 행사. 이 사건이 "왜 어떤 업종에 수혜/타격인지"를 근거로 테마를 고른다.
+★ 절대 이슈로 쓰지 마라(이건 사건이 아니라 증시 현상일 뿐): 코스피·코스닥 지수 등락/급등락, 사이드카·서킷브레이커, 외국인·기관 수급, "환율/유가가 몇 % 움직였다" 결과 자체, 증권사 목표주가·투자의견, "OO주 상승/하락" 같은 주가 결과 뉴스.
+  → 만약 헤드라인이 이런 주가·증시 뉴스뿐이라면, 그 뒤에 있는 "실제 원인 사건"을 이슈로 삼아라.
+★ 두 이슈는 서로 다른 사건 + 서로 다른 테마(no)여야 한다.
+
+각 이슈에 대해 [테마목록]에서 가장 관련 깊은 테마를 no로 정확히 하나 매칭한다(목록에 없는 no는 만들지 마라).
 반드시 아래 JSON만 출력:
-{"issues":[{"title":"이슈 한 줄","why":"왜 국내 증시 재료인지 한 줄","theme_no":"매칭 테마 no","theme_name":"매칭 테마명"}]}  // issues는 정확히 2개`;
+{"issues":[{"title":"현실 사건 한 줄","why":"이 사건이 왜 그 업종에 재료인지 한 줄","theme_no":"매칭 테마 no","theme_name":"매칭 테마명"}]}  // issues는 정확히 2개`;
   const user = `[마감 이후 헤드라인]\n${news.join("\n")}\n\n[테마목록(no:이름)]\n${themeList}`;
 
   console.log("🤖 Groq가 핵심 이슈 2개 선정 + 테마 매칭…\n");
