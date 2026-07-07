@@ -2,7 +2,7 @@
 
 > **한국어 문장으로 한국 주식을 다루는** 풀스택 웹앱. Next.js 하나로 프론트 + 백엔드(API 라우트)를 통합했고, 무료 키(Groq)만으로 실데이터로 돌아갑니다.
 
-🔗 **라이브 데모:** _(Vercel 배포 후 링크 추가 예정)_
+🔗 **라이브 데모: [nl-stock-screener-afvg.vercel.app](https://nl-stock-screener-afvg.vercel.app/)**
 
 세 가지 화면으로 구성됩니다:
 
