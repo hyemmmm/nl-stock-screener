@@ -79,13 +79,21 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-6xl px-5 py-10">
-      <header className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-          자연어 종목 스크리너
-        </h1>
-        <p className="mt-2 text-sm text-zinc-400">
-          원하는 조건을 한국어로 자유롭게 적어주세요. 여러 줄로 길게 써도 됩니다.
-        </p>
+      <header className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            자연어 종목 스크리너
+          </h1>
+          <p className="mt-2 text-sm text-zinc-400">
+            원하는 조건을 한국어로 자유롭게 적어주세요. 여러 줄로 길게 써도 됩니다.
+          </p>
+        </div>
+        <a
+          href="/today"
+          className="shrink-0 rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+        >
+          📰 오늘의 이슈 →
+        </a>
       </header>
 
       {/* prompt-style composer */}
