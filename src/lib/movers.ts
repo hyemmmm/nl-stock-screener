@@ -5,8 +5,18 @@
 //   무료/무키(네이버·구글).
 // ──────────────────────────────────────────────────────────────────────────
 
+import { promises as fs } from "fs";
+import path from "path";
+
 const dec = (buf: ArrayBuffer) => new TextDecoder("euc-kr").decode(Buffer.from(buf));
 const NAVER = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
+
+// 오늘(KST) YYYY-MM-DD
+export function kstDate(): string {
+  const d = new Date(Date.now() + 9 * 3600e3);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+}
 
 export const MIN_VOLUME = 10_000_000; // 거래량 기준: 1000만주
 
@@ -143,11 +153,35 @@ export async function getMovers(): Promise<MoversResult> {
     }),
   );
 
-  const now = new Date(Date.now() + 9 * 3600e3);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return {
-    date: `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`,
-    minVolumeLabel: "1,000만주",
-    movers,
-  };
+  return { date: kstDate(), minVolumeLabel: "1,000만주", movers };
+}
+
+// ── 일별 스냅샷 저장/조회 (로컬 forward-accumulate) ─────────────────────────
+const SNAP_DIR = path.join(process.cwd(), "data", "movers");
+
+export async function saveMoversSnapshot(res: MoversResult): Promise<void> {
+  await fs.mkdir(SNAP_DIR, { recursive: true });
+  await fs.writeFile(path.join(SNAP_DIR, `${res.date}.json`), JSON.stringify(res), "utf8");
+}
+
+// 저장된 날짜들 (최신순)
+export async function listSnapshotDates(): Promise<string[]> {
+  try {
+    const files = await fs.readdir(SNAP_DIR);
+    return files
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.replace(/\.json$/, ""))
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
+export async function readMoversSnapshot(date: string): Promise<MoversResult | null> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(SNAP_DIR, `${date}.json`), "utf8"));
+  } catch {
+    return null;
+  }
 }

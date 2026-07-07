@@ -4,24 +4,56 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Mover, MoversResult } from "@/lib/movers";
 
+interface MoversResponse extends MoversResult {
+  dates?: string[];
+  saved?: boolean;
+  missing?: boolean;
+  error?: string;
+}
+
+const todayKST = () => {
+  const d = new Date(Date.now() + 9 * 3600e3);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+};
+
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+const dateLabel = (d: string) => {
+  const [y, m, day] = d.split("-").map(Number);
+  const wd = WD[new Date(Date.UTC(y, m - 1, day)).getUTCDay()];
+  const base = `${m}/${day}(${wd})`;
+  return d === todayKST() ? `오늘 ${base}` : base;
+};
+
 export default function MoversPage() {
-  const [data, setData] = useState<MoversResult | null>(null);
+  const [data, setData] = useState<MoversResponse | null>(null);
+  const [dates, setDates] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string>(""); // "" = 오늘(라이브)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  async function load(date?: string) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/movers", { cache: "no-store" });
-      const json = await res.json();
+      const qs = date ? `?date=${date}` : "";
+      const res = await fetch(`/api/movers${qs}`, { cache: "no-store" });
+      const json = (await res.json()) as MoversResponse;
       if (json.error) setError(json.error);
-      else setData(json as MoversResult);
+      else {
+        setData(json);
+        if (json.dates) setDates(json.dates);
+      }
     } catch {
       setError("불러오기 실패");
     } finally {
       setLoading(false);
     }
+  }
+
+  function onPick(date: string) {
+    setSelected(date);
+    load(date === todayKST() ? undefined : date);
   }
 
   useEffect(() => {
@@ -44,8 +76,20 @@ export default function MoversPage() {
           <Link href="/today" className="text-xs text-zinc-500 hover:text-zinc-300">
             오늘의 이슈 →
           </Link>
+          <select
+            value={selected || todayKST()}
+            onChange={(e) => onPick(e.target.value)}
+            disabled={loading}
+            className="rounded-lg border border-ink-600 bg-ink-800 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+          >
+            {(dates.length ? dates : [todayKST()]).map((d) => (
+              <option key={d} value={d}>
+                {dateLabel(d)}
+              </option>
+            ))}
+          </select>
           <button
-            onClick={load}
+            onClick={() => load(selected && selected !== todayKST() ? selected : undefined)}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
@@ -64,9 +108,16 @@ export default function MoversPage() {
           {error}
         </p>
       )}
+      {data && data.saved && data.movers.length > 0 && (
+        <p className="mb-3 text-xs text-zinc-500">
+          📅 {dateLabel(data.date)} 저장된 데이터 (그날 종가 기준)
+        </p>
+      )}
       {data && data.movers.length === 0 && (
         <div className="rounded-2xl border border-ink-600 bg-ink-800 p-10 text-center text-sm text-zinc-500">
-          조건에 맞는 종목이 없어요. (장중이면 종가 확정 후 다시 보세요)
+          {data.missing
+            ? "그날은 저장된 데이터가 없어요. (기록은 오늘부터 매일 쌓여요)"
+            : "조건에 맞는 종목이 없어요. (장중이면 종가 확정 후 다시 보세요)"}
         </div>
       )}
 
