@@ -88,12 +88,20 @@ export default function Home() {
             원하는 조건을 한국어로 자유롭게 적어주세요. 여러 줄로 길게 써도 됩니다.
           </p>
         </div>
-        <a
-          href="/today"
-          className="shrink-0 rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-        >
-          📰 오늘의 이슈 →
-        </a>
+        <div className="flex shrink-0 gap-2">
+          <a
+            href="/movers"
+            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+          >
+            🔥 특징주
+          </a>
+          <a
+            href="/today"
+            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+          >
+            📰 오늘의 이슈 →
+          </a>
+        </div>
       </header>
 
       {/* prompt-style composer */}

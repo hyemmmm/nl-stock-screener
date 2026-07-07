@@ -63,6 +63,9 @@ export default function TodayPage() {
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 스크리너
           </Link>
+          <Link href="/movers" className="text-xs text-zinc-500 hover:text-zinc-300">
+            특징주 →
+          </Link>
           <Link href="/track" className="text-xs text-zinc-500 hover:text-zinc-300">
             성적표 →
           </Link>
