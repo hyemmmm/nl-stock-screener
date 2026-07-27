@@ -90,6 +90,12 @@ export default function Home() {
         </div>
         <div className="flex shrink-0 gap-2">
           <a
+            href="/catalyst"
+            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+          >
+            📈 재료분석
+          </a>
+          <a
             href="/movers"
             className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
           >
