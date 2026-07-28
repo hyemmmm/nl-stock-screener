@@ -10,6 +10,7 @@ interface CatalystEvent {
   session: Session;
   title: string;
   link: string;
+  game: string;
   closeReact: number | null;
   openBuy: number | null;
 }
@@ -20,7 +21,7 @@ interface StockHistory {
 }
 interface ScanResult {
   rule: string;
-  today: { name: string; code: string; title: string; link: string }[];
+  today: { name: string; code: string; title: string; link: string; game: string }[];
   history: StockHistory[];
   error?: string;
 }
@@ -117,7 +118,10 @@ export default function ScannerPage() {
                     key={t.code}
                     className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3"
                   >
-                    <div className="text-sm font-semibold text-emerald-300">{t.name}</div>
+                    <div className="text-sm font-semibold text-emerald-300">
+                      {t.name}
+                      {t.game && <span className="ml-2 text-xs text-emerald-400/80">🎮 {t.game}</span>}
+                    </div>
                     <a
                       href={t.link}
                       target="_blank"
@@ -175,13 +179,18 @@ export default function ScannerPage() {
                                 </span>
                               </td>
                               <td className="px-3 py-2">
+                                {e.game && (
+                                  <span className="mr-1.5 rounded bg-sky-500/15 px-1 py-0.5 text-[10px] text-sky-300">
+                                    🎮 {e.game}
+                                  </span>
+                                )}
                                 <a
                                   href={e.link}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="text-zinc-300 hover:text-white hover:underline"
                                 >
-                                  {e.title.length > 42 ? e.title.slice(0, 42) + "…" : e.title}
+                                  {e.title.length > 40 ? e.title.slice(0, 40) + "…" : e.title}
                                 </a>
                               </td>
                               <td className={`whitespace-nowrap px-2 py-2 text-right ${cls(e.closeReact)}`}>

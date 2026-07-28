@@ -21,6 +21,48 @@ export const GAME_STOCKS: { name: string; code: string }[] = [
   { name: "네오위즈", code: "095660" },
 ];
 const KW = /출시|신작|론칭|런칭|발매|사전\s?(예약|등록)|출격|글로벌\s?(서비스|출시)|공개|티저/;
+// 신작 출시가 아닌 명백한 노이즈 (DLC·굿즈·업데이트·음원·콜라보·실적·코인 등)
+const EXCLUDE =
+  /DLC|굿즈|도시락|음원|이모티콘|업데이트|스킨|코스튬|콜라보|협업|스테이블\s?코인|메인넷|목표가|실적|리포트|서포트\s?카드|액세서리|현대카드|블록체인|웹3|NFT|밈코인|정령|굿즈|한국여행/i;
+// Groq 없을 때 폴백(대략적)
+const STRICT = /신작|정식\s?출시|글로벌\s?(출시|서비스)|사전\s?(예약|등록)|출시일|퍼블리싱/;
+
+// Groq로 "진짜 신작 게임 출시/발표"인지 판별 (아니면 폴백 키워드).
+async function classifyNewGame(titles: string[]): Promise<{ isNew: boolean; game: string }[]> {
+  const fb = () => titles.map((t) => ({ isNew: STRICT.test(t), game: "" }));
+  if (!process.env.GROQ_API_KEY || titles.length === 0) return fb();
+  try {
+    const sys = `너는 게임주 애널리스트다. 각 헤드라인이 "새 게임(신작)의 출시 또는 출시 관련 발표(정식출시/글로벌출시/사전예약/출시일 확정/퍼블리싱 계약/신작 공개)"인지 판별하라.
+DLC·업데이트·스킨·굿즈·음원·콜라보·이모티콘·실적·목표가·코인/블록체인·기존게임 이벤트/근황은 전부 false.
+JSON만: {"results":[{"i":번호,"isNew":true/false,"game":"게임명 또는 -"}]} — 모든 i에 대해.`;
+    const user = titles.map((t, i) => `[${i}] ${t}`).join("\n");
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.LLM_MODEL || "llama-3.3-70b-versatile",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user },
+        ],
+      }),
+      cache: "no-store",
+    });
+    const j = await r.json();
+    const parsed = JSON.parse(j.choices[0].message.content) as {
+      results?: { i: number; isNew: boolean; game: string }[];
+    };
+    const out = titles.map(() => ({ isNew: false, game: "" }));
+    for (const rr of parsed.results || [])
+      if (rr.i >= 0 && rr.i < out.length)
+        out[rr.i] = { isNew: !!rr.isNew, game: rr.game && rr.game !== "-" ? rr.game : "" };
+    return out;
+  } catch {
+    return fb();
+  }
+}
 
 interface Candle {
   date: string;
@@ -79,6 +121,7 @@ export interface CatalystEvent {
   session: Session;
   title: string;
   link: string;
+  game: string; // Groq가 뽑은 게임명
   closeReact: number | null; // 발표 반응: 전일종가→반응일종가 (%)
   openBuy: number | null; // 시가매수: 반응일 시가→종가 (%)
 }
@@ -89,7 +132,7 @@ export interface StockHistory {
 }
 export interface ScanResult {
   rule: string;
-  today: { name: string; code: string; title: string; link: string }[];
+  today: { name: string; code: string; title: string; link: string; game: string }[];
   history: StockHistory[];
 }
 
@@ -100,7 +143,9 @@ function analyze(px: Candle[], news: { ts: number; title: string; link: string }
     for (let i = 0; i < px.length; i++) if (px[i].date > y) return i;
     return -1;
   };
-  const hits = news.filter((x) => KW.test(x.title)).sort((a, b) => a.ts - b.ts);
+  const hits = news
+    .filter((x) => KW.test(x.title) && !EXCLUDE.test(x.title))
+    .sort((a, b) => a.ts - b.ts);
   // 14일 에피소드로 묶기(같은 게임 반복 제거), 대표=첫 뉴스
   const eps: { ds: string; kd: Date; title: string; link: string }[] = [];
   let last: number | null = null;
@@ -137,6 +182,7 @@ function analyze(px: Candle[], news: { ts: number; title: string; link: string }
         session,
         title: e.title,
         link: e.link,
+        game: "",
         closeReact: ok ? (px[en].close / px[en - 1].close - 1) * 100 : null,
         openBuy: ok ? (px[en].close / px[en].open - 1) * 100 : null,
       };
@@ -157,7 +203,7 @@ export async function scanGameCatalyst(): Promise<ScanResult> {
   const cutoffRecent = now.getTime() - 3 * 864e5;
 
   const history: StockHistory[] = [];
-  const today: ScanResult["today"] = [];
+  const todayCand: ScanResult["today"] = [];
 
   await Promise.all(
     GAME_STOCKS.map(async ({ name, code }) => {
@@ -169,16 +215,35 @@ export async function scanGameCatalyst(): Promise<ScanResult> {
       const allNews = windowed.flat();
       const events = px.length > 30 ? analyze(px, allNews) : [];
       history.push({ name, code, events });
-      // 오늘/최근 발동: 최근 3일 내 키워드 매칭 뉴스
+      // 오늘/최근 발동 후보: 최근 3일 내 키워드 매칭 뉴스
       const hit = recent
-        .filter((x) => KW.test(x.title) && x.ts >= cutoffRecent)
+        .filter((x) => KW.test(x.title) && !EXCLUDE.test(x.title) && x.ts >= cutoffRecent)
         .sort((a, b) => b.ts - a.ts)[0];
-      if (hit) today.push({ name, code, title: hit.title, link: hit.link });
+      if (hit) todayCand.push({ name, code, title: hit.title, link: hit.link, game: "" });
     }),
   );
 
   history.sort(
     (a, b) => GAME_STOCKS.findIndex((s) => s.code === a.code) - GAME_STOCKS.findIndex((s) => s.code === b.code),
   );
+
+  // Groq로 "진짜 신작 출시"만 남기기 (히스토리 이벤트 + 오늘 후보 한 번에)
+  const allTitles = [...history.flatMap((s) => s.events.map((e) => e.title)), ...todayCand.map((t) => t.title)];
+  const cls = await classifyNewGame(allTitles);
+  let gi = 0;
+  for (const s of history) {
+    const kept: CatalystEvent[] = [];
+    for (const e of s.events) {
+      const c = cls[gi++];
+      if (c.isNew) kept.push({ ...e, game: c.game });
+    }
+    s.events = kept;
+  }
+  const today: ScanResult["today"] = [];
+  for (const t of todayCand) {
+    const c = cls[gi++];
+    if (c.isNew) today.push({ ...t, game: c.game });
+  }
+
   return { rule: "게임주 — 신작 출시 소식", today, history };
 }
