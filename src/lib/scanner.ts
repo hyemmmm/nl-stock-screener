@@ -5,6 +5,8 @@
 //   각 이벤트: 뉴스 날짜·세션(장중/장후)·헤드라인 + 주가 반응(종가/시가매수).
 // ──────────────────────────────────────────────────────────────────────────
 
+import { searchStock } from "./catalyst";
+
 const NAVER = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
 const ymd = (d: Date) =>
   `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -220,10 +222,10 @@ function analyze(px: Candle[], news: { ts: number; title: string; link: string }
 export async function scanGameCatalyst(): Promise<ScanResult> {
   const now = new Date();
   const windows: [string, string][] = [];
-  let c = new Date(2023, 10, 1);
+  let c = new Date(2025, 0, 1);
   while (c < now) {
     const nx = new Date(c);
-    nx.setMonth(nx.getMonth() + 4);
+    nx.setMonth(nx.getMonth() + 6);
     windows.push([iso(c), iso(nx)]);
     c = nx;
   }
@@ -272,37 +274,240 @@ export async function scanGameCatalyst(): Promise<ScanResult> {
     if (c.isNew) today.push({ ...t, game: c.game });
   }
 
-  // 게임별 '최초 언급일' 조회 → 처음 언급되는 게임만 남김 (재탕·후속 소식 제외)
-  const games = [
-    ...new Set(
-      [...history.flatMap((s) => s.events.map((e) => e.game)), ...today.map((t) => t.game)].filter(Boolean),
-    ),
-  ].slice(0, 60);
-  const firstMap: Record<string, number | null> = {};
-  await Promise.all(games.map(async (g) => (firstMap[g] = await firstMentionTs(g))));
-  const DAY = 864e5;
-  const evTs = (d: string) => Date.parse(`${d}T00:00:00+09:00`);
-
+  // 히스토리: 종목·게임별 최초 이벤트만(뭉뚱그린 것 제외). 최신순.
   for (const s of history) {
-    // 종목·게임별 최초 이벤트만 남기고, 그게 게임 최초 언급 근처일 때만(=이 종목이 데뷔시킨 게임)
     const byGame = new Map<string, CatalystEvent>();
     for (const e of s.events) {
       if (!e.game || GENERIC.test(e.game)) continue;
       const prev = byGame.get(e.game);
       if (!prev || e.date < prev.date) byGame.set(e.game, e);
     }
-    s.events = [...byGame.values()]
-      .filter((e) => {
-        const fs = firstMap[e.game];
-        return fs == null || evTs(e.date) - fs <= 12 * DAY;
-      })
-      .sort((a, b) => b.date.localeCompare(a.date));
+    s.events = [...byGame.values()].sort((a, b) => b.date.localeCompare(a.date));
   }
+  // 오늘 발동은 '처음 언급되는 게임'만 — 오늘 후보 게임만 최초 언급일 조회(구글 호출 절약)
+  const DAY = 864e5;
   const nowTs = Date.now();
+  const todayGames = [...new Set(today.map((t) => t.game).filter((g) => g && !GENERIC.test(g)))];
+  const firstMap: Record<string, number | null> = {};
+  await inBatches(todayGames, 6, async (g) => (firstMap[g] = await firstMentionTs(g)));
   const todayFresh = today.filter((t) => {
     const fs = firstMap[t.game];
-    return t.game && !GENERIC.test(t.game) && fs != null && nowTs - fs <= 4 * DAY; // 최근에 '처음' 언급된 게임만
+    return t.game && !GENERIC.test(t.game) && fs != null && nowTs - fs <= 4 * DAY;
   });
 
   return { rule: "게임주 — 신작 출시 소식", today: todayFresh, history };
+}
+
+// ── 규칙 2: 바이오주 — FDA 임상 진입(국내) ──────────────────────────────────
+const BIO_QUERIES = ["FDA 임상", "IND 승인", "IND 신청"];
+
+// 동시요청 제한 배치 실행 (구글뉴스 레이트리밋 회피)
+async function inBatches<T, R>(items: T[], size: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  }
+  return out;
+}
+
+// 뉴스 시각 → 세션/반응 (게임 로직과 동일)
+function computeReaction(
+  px: Candle[],
+  ts: number,
+): { date: string; time: string; session: Session; closeReact: number | null; openBuy: number | null } {
+  const di: Record<string, number> = {};
+  px.forEach((c, i) => (di[c.date] = i));
+  const nextIdx = (y: string) => {
+    for (let i = 0; i < px.length; i++) if (px[i].date > y) return i;
+    return -1;
+  };
+  const kd = new Date(ts + 9 * 3600e3);
+  const ds = ymd(kd);
+  const kh = kd.getUTCHours() + kd.getUTCMinutes() / 60;
+  const wd = kd.getUTCDay();
+  const trad = di[ds] != null;
+  let session: Session, en: number;
+  if (wd === 0 || wd === 6 || !trad) {
+    session = "휴장";
+    en = nextIdx(ds);
+  } else if (kh < 9) {
+    session = "장전";
+    en = di[ds];
+  } else if (kh <= 15.5) {
+    session = "장중";
+    en = nextIdx(ds);
+  } else {
+    session = "장후";
+    en = nextIdx(ds);
+  }
+  const ok = en > 0 && en < px.length;
+  return {
+    date: iso(kd),
+    time: `${String(Math.floor(kh)).padStart(2, "0")}:${String(Math.round((kh % 1) * 60)).padStart(2, "0")}`,
+    session,
+    closeReact: ok ? (px[en].close / px[en - 1].close - 1) * 100 : null,
+    openBuy: ok ? (px[en].close / px[en].open - 1) * 100 : null,
+  };
+}
+
+export interface BioEvent {
+  company: string;
+  code: string;
+  phase: string; // 1상/2상/3상
+  stage: string; // 신청/승인
+  date: string;
+  time: string;
+  session: Session;
+  title: string;
+  link: string;
+  closeReact: number | null;
+  openBuy: number | null;
+}
+export interface BioResult {
+  rule: string;
+  today: BioEvent[];
+  events: BioEvent[]; // 히스토리(최신순)
+}
+
+async function classifyBio(
+  titles: string[],
+): Promise<{ ok: boolean; company: string; phase: string; stage: string }[]> {
+  const fb = titles.map(() => ({ ok: false, company: "", phase: "", stage: "" }));
+  if (!process.env.GROQ_API_KEY || !titles.length) return fb;
+  try {
+    const sys = `너는 바이오 주식 애널리스트다. 각 헤드라인이 "국내(한국) 상장 바이오/제약사가 '미국 FDA'에 임상 1/2/3상 진입을 신청(IND 제출)했거나 승인(허가)받은 소식"인지 판별하라.
+반드시 미국 FDA여야 한다. 국내 식약처·질병청 IND, 해외(비한국)회사, 임상 '결과/데이터', 품목허가(시판승인), 단순 파이프라인 언급은 전부 false.
+JSON만: {"results":[{"i":번호,"ok":true/false,"company":"회사명 또는 -","phase":"1상/2상/3상/-","stage":"신청/승인/-"}]} — 모든 i.`;
+    const user = titles.map((t, i) => `[${i}] ${t}`).join("\n");
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.LLM_MODEL || "llama-3.3-70b-versatile",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user },
+        ],
+      }),
+      cache: "no-store",
+    });
+    const j = await r.json();
+    const parsed = JSON.parse(j.choices[0].message.content) as {
+      results?: { i: number; ok: boolean; company: string; phase: string; stage: string }[];
+    };
+    const out = titles.map(() => ({ ok: false, company: "", phase: "", stage: "" }));
+    for (const rr of parsed.results || [])
+      if (rr.i >= 0 && rr.i < out.length)
+        out[rr.i] = {
+          ok: !!rr.ok,
+          company: rr.company && rr.company !== "-" ? rr.company : "",
+          phase: rr.phase && rr.phase !== "-" ? rr.phase : "",
+          stage: rr.stage && rr.stage !== "-" ? rr.stage : "",
+        };
+    return out;
+  } catch {
+    return fb;
+  }
+}
+
+export async function scanBioCatalyst(): Promise<BioResult> {
+  const now = new Date();
+  const windows: [string, string][] = [];
+  let c = new Date(2024, 6, 1); // 최근 ~2년
+  while (c < now) {
+    const nx = new Date(c);
+    nx.setMonth(nx.getMonth() + 6);
+    windows.push([iso(c), iso(nx)]);
+    c = nx;
+  }
+  // 뉴스 수집(쿼리 × 창) — 8개씩 배치로 레이트리밋 회피
+  const raw = (
+    await inBatches(
+      BIO_QUERIES.flatMap((q) => windows.map(([a, b]) => [q, a, b] as const)),
+      8,
+      ([q, a, b]) => fetchNewsRaw(q, a, b),
+    )
+  ).flat();
+  // 제목 중복 제거
+  const seen = new Set<string>();
+  const news = raw.filter((x) => (seen.has(x.title) ? false : (seen.add(x.title), true)));
+
+  // Groq 넣기 전 사전 필터: 임상/IND + 신청/승인류 (토큰 폭증·노이즈 방지), 최신 80건
+  const REL = /(IND|임상)/i;
+  const ACT = /(승인|신청|허가|제출|시험\s?계획)/;
+  const relevant = news
+    .filter((x) => REL.test(x.title) && ACT.test(x.title))
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 80);
+  const cls = await classifyBio(relevant.map((x) => x.title));
+  // 해당건만, 회사+상 기준 중복 제거(가장 이른 것)
+  const byKey = new Map<string, { company: string; phase: string; stage: string; ts: number; title: string; link: string }>();
+  relevant.forEach((x, i) => {
+    const c2 = cls[i];
+    if (!c2.ok || !c2.company) return;
+    const key = `${c2.company}|${c2.phase}`;
+    const prev = byKey.get(key);
+    if (!prev || x.ts < prev.ts) byKey.set(key, { ...c2, ts: x.ts, title: x.title, link: x.link });
+  });
+  const cand = [...byKey.values()].sort((a, b) => b.ts - a.ts).slice(0, 40);
+
+  // 회사 → 코드 (유니크만)
+  const companies = [...new Set(cand.map((x) => x.company))];
+  const codeMap: Record<string, string> = {};
+  await inBatches(companies, 8, async (name) => {
+    const hits = await searchStock(name);
+    if (hits[0]) codeMap[name] = hits[0].code;
+  });
+  // 코드별 가격 (유니크만)
+  const codes = [...new Set(Object.values(codeMap))];
+  const pxMap: Record<string, Candle[]> = {};
+  await inBatches(codes, 8, async (code) => (pxMap[code] = await fetchPrices(code)));
+
+  const events: BioEvent[] = cand
+    .map((x) => {
+      const code = codeMap[x.company];
+      const px = code ? pxMap[code] : null;
+      const r = px && px.length > 5 ? computeReaction(px, x.ts) : null;
+      return {
+        company: x.company,
+        code: code || "",
+        phase: x.phase,
+        stage: x.stage,
+        date: r?.date ?? new Date(x.ts + 9 * 3600e3).toISOString().slice(0, 10),
+        time: r?.time ?? "",
+        session: r?.session ?? "장후",
+        title: x.title,
+        link: x.link,
+        closeReact: r?.closeReact ?? null,
+        openBuy: r?.openBuy ?? null,
+      };
+    })
+    .filter((e) => e.code); // 상장 종목만
+
+  const cutoff = now.getTime() - 4 * 864e5;
+  const today = events.filter((e) => Date.parse(`${e.date}T00:00:00+09:00`) >= cutoff);
+  return { rule: "바이오주 — FDA 임상 진입(국내)", today, events };
+}
+
+// 원본 검색(키워드 그대로, 날짜창)
+async function fetchNewsRaw(query: string, after: string, before: string) {
+  try {
+    const q = encodeURIComponent(`${query} after:${after} before:${before}`);
+    const txt = await (
+      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, { cache: "no-store" })
+    ).text();
+    const out: { ts: number; title: string; link: string }[] = [];
+    for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+      const b = m[1];
+      const t = b.match(/<title>([^<]+)<\/title>/)?.[1];
+      const pd = b.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
+      const link = b.match(/<link>([^<]+)<\/link>/)?.[1] ?? "";
+      if (t && pd) out.push({ ts: Date.parse(pd), title: t.replace(/&#39;/g, "'").replace(/&quot;/g, '"'), link });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
