@@ -5,12 +5,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(req: Request) {
+  const rule = new URL(req.url).searchParams.get("rule");
   try {
-    // 구글뉴스 레이트리밋 회피 위해 순차 실행
-    const game = await scanGameCatalyst();
-    const bio = await scanBioCatalyst();
-    return NextResponse.json({ game, bio });
+    if (rule === "game") return NextResponse.json(await scanGameCatalyst());
+    if (rule === "bio") return NextResponse.json(await scanBioCatalyst());
+    return NextResponse.json({ error: "rule 파라미터가 필요합니다 (game|bio)" }, { status: 400 });
   } catch (err) {
     console.error("[/api/scanner]", err);
     return NextResponse.json({ error: "스캔에 실패했습니다" }, { status: 500 });
