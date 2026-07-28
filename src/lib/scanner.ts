@@ -26,6 +26,8 @@ const EXCLUDE =
   /DLC|굿즈|도시락|음원|이모티콘|업데이트|스킨|코스튬|콜라보|협업|스테이블\s?코인|메인넷|목표가|실적|리포트|서포트\s?카드|액세서리|현대카드|블록체인|웹3|NFT|밈코인|정령|굿즈|한국여행/i;
 // Groq 없을 때 폴백(대략적)
 const STRICT = /신작|정식\s?출시|글로벌\s?(출시|서비스)|사전\s?(예약|등록)|출시일|퍼블리싱/;
+// 특정 게임명이 아닌 뭉뚱그린 표현 (진짜 '한 게임 최초 언급'이 아님)
+const GENERIC = /라인업|미공개|여러|다수|^신작$|^-?$/;
 
 // Groq로 "진짜 신작 게임 출시/발표"인지 판별 (아니면 폴백 키워드).
 async function classifyNewGame(titles: string[]): Promise<{ isNew: boolean; game: string }[]> {
@@ -111,6 +113,31 @@ async function fetchNews(name: string, after?: string, before?: string) {
     return out;
   } catch {
     return [];
+  }
+}
+
+// 게임명으로 검색해 '최초 언급' 시각(ms). 최초 공개일 판별용.
+async function firstMentionTs(game: string): Promise<number | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const q = encodeURIComponent(`"${game}"`);
+    const txt = await (
+      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, {
+        cache: "no-store",
+        signal: ctrl.signal,
+      })
+    ).text();
+    let min = Infinity;
+    for (const m of txt.matchAll(/<pubDate>([^<]+)<\/pubDate>/g)) {
+      const ts = Date.parse(m[1]);
+      if (!Number.isNaN(ts) && ts < min) min = ts;
+    }
+    return min === Infinity ? null : min;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -245,5 +272,37 @@ export async function scanGameCatalyst(): Promise<ScanResult> {
     if (c.isNew) today.push({ ...t, game: c.game });
   }
 
-  return { rule: "게임주 — 신작 출시 소식", today, history };
+  // 게임별 '최초 언급일' 조회 → 처음 언급되는 게임만 남김 (재탕·후속 소식 제외)
+  const games = [
+    ...new Set(
+      [...history.flatMap((s) => s.events.map((e) => e.game)), ...today.map((t) => t.game)].filter(Boolean),
+    ),
+  ].slice(0, 60);
+  const firstMap: Record<string, number | null> = {};
+  await Promise.all(games.map(async (g) => (firstMap[g] = await firstMentionTs(g))));
+  const DAY = 864e5;
+  const evTs = (d: string) => Date.parse(`${d}T00:00:00+09:00`);
+
+  for (const s of history) {
+    // 종목·게임별 최초 이벤트만 남기고, 그게 게임 최초 언급 근처일 때만(=이 종목이 데뷔시킨 게임)
+    const byGame = new Map<string, CatalystEvent>();
+    for (const e of s.events) {
+      if (!e.game || GENERIC.test(e.game)) continue;
+      const prev = byGame.get(e.game);
+      if (!prev || e.date < prev.date) byGame.set(e.game, e);
+    }
+    s.events = [...byGame.values()]
+      .filter((e) => {
+        const fs = firstMap[e.game];
+        return fs == null || evTs(e.date) - fs <= 12 * DAY;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }
+  const nowTs = Date.now();
+  const todayFresh = today.filter((t) => {
+    const fs = firstMap[t.game];
+    return t.game && !GENERIC.test(t.game) && fs != null && nowTs - fs <= 4 * DAY; // 최근에 '처음' 언급된 게임만
+  });
+
+  return { rule: "게임주 — 신작 출시 소식", today: todayFresh, history };
 }
