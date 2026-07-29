@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
+type Dir = "호재" | "악재" | "중립";
 interface Disclosure {
   code: string;
   name: string;
   title: string;
   type: string;
+  dir: Dir;
   link: string;
 }
 interface DartResult {
@@ -28,9 +30,16 @@ const TYPE_COLOR: Record<string, string> = {
 };
 const naver = (code: string) => `https://finance.naver.com/item/main.naver?code=${code}`;
 
+const DIR_COLOR: Record<Dir, string> = {
+  호재: "bg-up/15 text-up",
+  악재: "bg-down/15 text-down",
+  중립: "bg-zinc-500/15 text-zinc-400",
+};
+
 export default function DisclosuresPage() {
   const [data, setData] = useState<DartResult | null>(null);
   const [filter, setFilter] = useState<string>("전체");
+  const [dir, setDir] = useState<"전체" | Dir>("전체");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,7 +66,14 @@ export default function DisclosuresPage() {
     for (const it of data?.items ?? []) s.set(it.type, (s.get(it.type) ?? 0) + 1);
     return [...s.entries()];
   }, [data]);
-  const shown = (data?.items ?? []).filter((it) => filter === "전체" || it.type === filter);
+  const shown = (data?.items ?? []).filter(
+    (it) => (filter === "전체" || it.type === filter) && (dir === "전체" || it.dir === dir),
+  );
+  const dirCounts = useMemo(() => {
+    const c = { 호재: 0, 악재: 0, 중립: 0 } as Record<Dir, number>;
+    for (const it of data?.items ?? []) c[it.dir]++;
+    return c;
+  }, [data]);
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
@@ -100,10 +116,22 @@ export default function DisclosuresPage() {
 
       {data && (
         <>
+          {/* 방향 필터 */}
+          <div className="mb-2 flex flex-wrap gap-2">
+            <Chip active={dir === "전체"} onClick={() => setDir("전체")}>
+              전체 {data.items.length}
+            </Chip>
+            <Chip active={dir === "호재"} onClick={() => setDir("호재")}>
+              🔺 호재 {dirCounts.호재}
+            </Chip>
+            <Chip active={dir === "악재"} onClick={() => setDir("악재")}>
+              🔻 악재 {dirCounts.악재}
+            </Chip>
+          </div>
           {/* 유형 필터 */}
           <div className="mb-4 flex flex-wrap gap-2">
             <Chip active={filter === "전체"} onClick={() => setFilter("전체")}>
-              전체 {data.items.length}
+              유형 전체
             </Chip>
             {types.map(([t, n]) => (
               <Chip key={t} active={filter === t} onClick={() => setFilter(t)}>
@@ -126,6 +154,9 @@ export default function DisclosuresPage() {
                   rel="noreferrer"
                   className="flex items-center gap-3 border-b border-ink-700/50 px-4 py-3 last:border-0 hover:bg-ink-700/40"
                 >
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${DIR_COLOR[it.dir]}`}>
+                    {it.dir === "호재" ? "🔺" : it.dir === "악재" ? "🔻" : "–"}
+                  </span>
                   <span
                     className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
                       TYPE_COLOR[it.type] ?? "bg-zinc-500/15 text-zinc-400"

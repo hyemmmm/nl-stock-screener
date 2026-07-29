@@ -7,23 +7,31 @@
 
 const BASE = "https://opendart.fss.or.kr/api";
 
-// 재료성 공시 유형 (report_nm 키워드)
-const CATS: { t: string; re: RegExp }[] = [
-  { t: "계약·수주", re: /공급계약|단일판매|수주|납품|양수도\s?계약|판매계약|공급\s?계약/ },
-  { t: "임상·허가", re: /임상|품목허가|허가|승인|식약처|FDA/ },
-  { t: "투자·M&A", re: /타법인.*(취득|출자)|주식\s?취득|영업양수|합병|시설투자|신규\s?투자|지분\s?인수/ },
-  { t: "특허·기술", re: /특허권|기술이전|기술도입|기술\s?계약|라이선스|기술수출/ },
-  { t: "증자·CB", re: /유상증자|무상증자|전환사채|신주인수권부사채|교환사채/ },
-  { t: "자사주", re: /자기주식.*취득/ },
-  { t: "정부·국책", re: /국책|정부과제|국가과제|정부\s?지원|과제\s?선정/ },
+export type Dir = "호재" | "악재" | "중립";
+// 재료성 공시 유형 + 방향 (순서 중요: 악재 자사주처분/해지를 취득보다 먼저)
+const CATS: { t: string; dir: Dir; re: RegExp }[] = [
+  { t: "자사주처분", dir: "악재", re: /자기주식.*(처분|신탁계약\s?해지|해지)/ },
+  { t: "유상증자", dir: "악재", re: /유상증자/ },
+  { t: "CB·BW", dir: "악재", re: /전환사채|신주인수권부사채|교환사채/ },
+  { t: "감자", dir: "악재", re: /감자\s?결정/ },
+  { t: "계약·수주", dir: "호재", re: /공급계약|단일판매|수주|납품|판매계약/ },
+  { t: "임상·허가", dir: "호재", re: /임상|품목허가|허가|승인|식약처|FDA/ },
+  { t: "자사주취득", dir: "호재", re: /자기주식.*취득/ },
+  { t: "투자·M&A", dir: "호재", re: /타법인.*(취득|출자)|영업양수|시설투자|신규\s?투자|지분\s?인수/ },
+  { t: "특허·기술", dir: "호재", re: /특허권|기술이전|기술수출|라이선스/ },
+  { t: "무상증자", dir: "호재", re: /무상증자/ },
+  { t: "국책·정부", dir: "호재", re: /국책|정부과제|국가과제|과제\s?선정/ },
+  { t: "합병", dir: "중립", re: /합병\s?결정|분할\s?결정/ },
 ];
-// 재료 아님(루틴/행정) — 위 키워드가 걸려도 제외
+// 재료 아님(루틴/행정)
 const EXCLUDE =
-  /소유상황보고서|대량보유|소유주식\s?변동|특정증권등소유|임원ㆍ주요주주|기업설명회|IR개최|주주총회소집|실적공시\s?예고|투자설명서|사업보고서|분기보고서|반기보고서|감사보고서|증권신고서|일괄신고|합병.*종료|주식등의대량|의결권/;
+  /소유상황보고서|대량보유|소유주식\s?변동|특정증권등소유|임원ㆍ주요주주|기업설명회|IR개최|주주총회소집|실적공시\s?예고|투자설명서|사업보고서|분기보고서|반기보고서|감사보고서|증권신고서|일괄신고|주식등의대량|의결권|발행결과|청약결과/;
+// 새 재료만 — 정정/재공시 제외
+const REFILE = /정정|첨부정정|기재정정/;
 
-function classify(nm: string): string | null {
-  if (EXCLUDE.test(nm)) return null;
-  for (const c of CATS) if (c.re.test(nm)) return c.t;
+function classify(nm: string): { t: string; dir: Dir } | null {
+  if (EXCLUDE.test(nm) || REFILE.test(nm)) return null;
+  for (const c of CATS) if (c.re.test(nm)) return { t: c.t, dir: c.dir };
   return null;
 }
 
@@ -32,6 +40,7 @@ export interface Disclosure {
   name: string;
   title: string;
   type: string;
+  dir: Dir;
   link: string;
 }
 export interface DartResult {
@@ -78,8 +87,8 @@ export async function todayDisclosures(): Promise<DartResult> {
   for (const x of rows) {
     if (!/^\d{6}$/.test(x.stock_code || "")) continue; // 상장사만
     const nm = (x.report_nm || "").trim();
-    const type = classify(nm);
-    if (!type) continue;
+    const cat = classify(nm);
+    if (!cat) continue;
     const dedup = x.stock_code + "|" + nm;
     if (seen.has(dedup)) continue;
     seen.add(dedup);
@@ -87,13 +96,15 @@ export async function todayDisclosures(): Promise<DartResult> {
       code: x.stock_code,
       name: x.corp_name,
       title: nm,
-      type,
+      type: cat.t,
+      dir: cat.dir,
       link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${x.rcept_no}`,
     });
   }
-  // 유형 우선순위(계약·임상·투자 먼저)
+  // 호재 먼저, 그 안에서 유형 순
   const order = CATS.map((c) => c.t);
-  items.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
+  const dirRank = { 호재: 0, 중립: 1, 악재: 2 } as const;
+  items.sort((a, b) => dirRank[a.dir] - dirRank[b.dir] || order.indexOf(a.type) - order.indexOf(b.type));
 
   return { date: `${k.getUTCMonth() + 1}/${k.getUTCDate()}`, count: total, items };
 }
