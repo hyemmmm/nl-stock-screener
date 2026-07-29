@@ -7,21 +7,17 @@
 import { searchNews } from "./news";
 import { searchStock } from "./catalyst";
 
-// "없다가 생긴 것 / 있다가 사라진 것" 신호 검색어
-const SIGNAL_QUERIES = [
-  "규제 완화",
-  "규제 폐지",
-  "허용",
-  "최초 승인",
-  "허가 획득",
-  "대규모 수주",
-  "공급 계약",
-  "정부 지원",
-  "관세",
-  "의무화",
-  "확산",
-  "긴급 도입",
-];
+// "없다가 생긴 것 / 있다가 사라진 것" 신호 검색어 (호출량 관리 위해 6개)
+const SIGNAL_QUERIES = ["규제 완화", "허용", "허가 획득", "대규모 수주", "관세", "확산"];
+
+// 네이버 레이트리밋 회피용 배치 (동시 호출 제한)
+async function batchedSearch(queries: string[]) {
+  const out: Awaited<ReturnType<typeof searchNews>>[] = [];
+  for (let i = 0; i < queries.length; i += 3) {
+    out.push(...(await Promise.all(queries.slice(i, i + 3).map((q) => searchNews(q, { display: 100, sort: "date" })))));
+  }
+  return out;
+}
 
 // 방금 지난 15:30 KST(장마감). 마감 전이면 전 거래일 마감.
 function lastCloseMs(): number {
@@ -99,7 +95,7 @@ export async function detectCatalysts(): Promise<RadarResult> {
   const since = `${c.getUTCMonth() + 1}/${c.getUTCDate()} 15:30`;
 
   // 1) 신호 검색어로 오늘 뉴스 수집(마감 후, 최신)
-  const lists = await Promise.all(SIGNAL_QUERIES.map((q) => searchNews(q, { display: 20, sort: "date" })));
+  const lists = await batchedSearch(SIGNAL_QUERIES);
   const seen = new Set<string>();
   const headlines: { title: string; link: string }[] = [];
   for (const list of lists) {
@@ -198,7 +194,7 @@ export async function validateYesterday(): Promise<ValidateResult> {
   const todayYmd = `${Y}${pad(M + 1)}${pad(D)}`;
 
   // 어제~오늘개장전 재료성 헤드라인
-  const lists = await Promise.all(SIGNAL_QUERIES.map((q) => searchNews(q, { display: 100, sort: "date" })));
+  const lists = await batchedSearch(SIGNAL_QUERIES);
   const seen = new Set<string>();
   const heads: { title: string; link: string }[] = [];
   for (const list of lists) {
