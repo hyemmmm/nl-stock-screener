@@ -60,9 +60,13 @@ export default function RadarCheckPage() {
   }, []);
 
   // 종합 통계
-  const allMoves = data?.catalysts.flatMap((c) => c.stocks.map((s) => s.changePct)).filter((x): x is number => x != null) ?? [];
-  const upRate = allMoves.length ? Math.round((allMoves.filter((x) => x > 0).length / allMoves.length) * 100) : null;
-  const avg = allMoves.length ? allMoves.reduce((a, b) => a + b, 0) / allMoves.length : null;
+  const allStocks = data?.catalysts.flatMap((c) => c.stocks) ?? [];
+  const changes = allStocks.map((s) => s.changePct).filter((x): x is number => x != null);
+  const openBuys = allStocks.map((s) => s.openBuyPct).filter((x): x is number => x != null);
+  const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+  const upRate = changes.length ? Math.round((changes.filter((x) => x > 0).length / changes.length) * 100) : null;
+  const avg = mean(changes);
+  const avgOpen = mean(openBuys);
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
@@ -110,14 +114,18 @@ export default function RadarCheckPage() {
       {data && (
         <>
           {data.ready && upRate != null && (
-            <div className="mb-5 grid grid-cols-2 gap-3">
+            <div className="mb-5 grid grid-cols-3 gap-3">
               <div className="rounded-2xl border border-ink-600 bg-ink-800 p-4">
                 <div className="text-[11px] text-zinc-500">오른 종목 비율</div>
                 <div className="mt-1 text-xl font-bold text-white">{upRate}%</div>
               </div>
               <div className="rounded-2xl border border-ink-600 bg-ink-800 p-4">
-                <div className="text-[11px] text-zinc-500">평균 등락 (전일 대비)</div>
+                <div className="text-[11px] text-zinc-500">평균 · 전일 대비</div>
                 <div className={`mt-1 text-xl font-bold ${cls(avg)}`}>{pct(avg)}</div>
+              </div>
+              <div className="rounded-2xl border border-ink-600 bg-ink-800 p-4">
+                <div className="text-[11px] text-zinc-500">평균 · 시가매수→종가</div>
+                <div className={`mt-1 text-xl font-bold ${cls(avgOpen)}`}>{pct(avgOpen)}</div>
               </div>
             </div>
           )}
@@ -167,13 +175,19 @@ export default function RadarCheckPage() {
                       >
                         {s.name} <span className="text-xs text-zinc-600">{s.code}</span>
                       </a>
-                      <div className="text-right">
-                        <span className={`text-base font-bold ${cls(s.changePct)}`}>
-                          {pct(s.changePct)}
-                        </span>
-                        <span className="ml-2 text-xs text-zinc-500">
-                          시가매수 <span className={cls(s.openBuyPct)}>{pct(s.openBuyPct)}</span>
-                        </span>
+                      <div className="flex gap-5 text-right">
+                        <div>
+                          <div className="text-[10px] text-zinc-600">전일 대비</div>
+                          <div className={`text-sm font-bold ${cls(s.changePct)}`}>
+                            {pct(s.changePct)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-zinc-600">시가매수→종가</div>
+                          <div className={`text-sm font-bold ${cls(s.openBuyPct)}`}>
+                            {pct(s.openBuyPct)}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
