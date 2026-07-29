@@ -73,8 +73,11 @@ export default function RadarPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/radar/check" className="text-xs text-indigo-400 hover:text-indigo-300">
-            어제 결과 검증 →
+          <Link href="/radar/check" className="text-xs text-zinc-500 hover:text-zinc-300">
+            어제 결과 →
+          </Link>
+          <Link href="/radar/score" className="text-xs text-indigo-400 hover:text-indigo-300">
+            성적표 →
           </Link>
           <button
             onClick={load}
