@@ -6,6 +6,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 import { searchStock } from "./catalyst";
+import { searchNews } from "./news";
 
 const NAVER = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
 const ymd = (d: Date) =>
@@ -95,52 +96,18 @@ async function fetchPrices(code: string): Promise<Candle[]> {
   }
 }
 
-async function fetchNews(name: string, after?: string, before?: string) {
-  const range = after && before ? ` after:${after} before:${before}` : "";
-  try {
-    const q = encodeURIComponent(`${name} 출시${range}`);
-    const txt = await (
-      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, {
-        cache: "no-store",
-      })
-    ).text();
-    const out: { ts: number; title: string; link: string }[] = [];
-    for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-      const b = m[1];
-      const t = b.match(/<title>([^<]+)<\/title>/)?.[1];
-      const pd = b.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
-      const link = b.match(/<link>([^<]+)<\/link>/)?.[1] ?? "";
-      if (t && pd) out.push({ ts: Date.parse(pd), title: t.replace(/&#39;/g, "'").replace(/&quot;/g, '"'), link });
-    }
-    return out;
-  } catch {
-    return [];
-  }
+// 네이버 뉴스 검색(최신순). 네이버 API는 날짜창(after/before) 미지원 → 최근분 반환.
+async function fetchNews(name: string) {
+  const items = await searchNews(`${name} 출시`, { display: 100, sort: "date" });
+  return items.map((x) => ({ ts: Number.isNaN(x.ts) ? 0 : x.ts, title: x.title, link: x.link }));
 }
 
-// 게임명으로 검색해 '최초 언급' 시각(ms). 최초 공개일 판별용.
+// 게임명으로 검색해 '최초 언급' 시각(ms). 최근 100건 중 가장 이른 것(근사).
 async function firstMentionTs(game: string): Promise<number | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const q = encodeURIComponent(`"${game}"`);
-    const txt = await (
-      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, {
-        cache: "no-store",
-        signal: ctrl.signal,
-      })
-    ).text();
-    let min = Infinity;
-    for (const m of txt.matchAll(/<pubDate>([^<]+)<\/pubDate>/g)) {
-      const ts = Date.parse(m[1]);
-      if (!Number.isNaN(ts) && ts < min) min = ts;
-    }
-    return min === Infinity ? null : min;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const items = await searchNews(`"${game}"`, { display: 100, sort: "date" });
+  let min = Infinity;
+  for (const x of items) if (!Number.isNaN(x.ts) && x.ts < min) min = x.ts;
+  return min === Infinity ? null : min;
 }
 
 export type Session = "장전" | "장중" | "장후" | "휴장";
@@ -221,14 +188,6 @@ function analyze(px: Candle[], news: { ts: number; title: string; link: string }
 
 export async function scanGameCatalyst(): Promise<ScanResult> {
   const now = new Date();
-  const windows: [string, string][] = [];
-  let c = new Date(2025, 0, 1);
-  while (c < now) {
-    const nx = new Date(c);
-    nx.setMonth(nx.getMonth() + 6);
-    windows.push([iso(c), iso(nx)]);
-    c = nx;
-  }
   const cutoffRecent = now.getTime() - 3 * 864e5;
 
   const history: StockHistory[] = [];
@@ -236,12 +195,9 @@ export async function scanGameCatalyst(): Promise<ScanResult> {
 
   await Promise.all(
     GAME_STOCKS.map(async ({ name, code }) => {
-      const [px, recent, ...windowed] = await Promise.all([
-        fetchPrices(code),
-        fetchNews(name), // 최근(오늘 체크용)
-        ...windows.map(([a, b]) => fetchNews(name, a, b)),
-      ]);
-      const allNews = windowed.flat();
+      // 네이버는 날짜창 미지원 → 종목당 최신 뉴스 한 번(최근 100건). recent=전체와 동일.
+      const [px, allNews] = await Promise.all([fetchPrices(code), fetchNews(name)]);
+      const recent = allNews;
       const events = px.length > 30 ? analyze(px, allNews) : [];
       history.push({ name, code, events });
       // 오늘/최근 발동 후보: 최근 3일 내 키워드 매칭 뉴스
@@ -413,23 +369,12 @@ JSON만: {"results":[{"i":번호,"ok":true/false,"company":"회사명 또는 -",
 }
 
 export async function scanBioCatalyst(): Promise<BioResult> {
-  const now = new Date();
-  const windows: [string, string][] = [];
-  let c = new Date(2024, 6, 1); // 최근 ~2년
-  while (c < now) {
-    const nx = new Date(c);
-    nx.setMonth(nx.getMonth() + 6);
-    windows.push([iso(c), iso(nx)]);
-    c = nx;
-  }
-  // 뉴스 수집(쿼리 × 창) — 8개씩 배치로 레이트리밋 회피
+  // 네이버 뉴스 검색(쿼리별 최신 100건). 날짜창 미지원 → 최근분.
   const raw = (
-    await inBatches(
-      BIO_QUERIES.flatMap((q) => windows.map(([a, b]) => [q, a, b] as const)),
-      8,
-      ([q, a, b]) => fetchNewsRaw(q, a, b),
-    )
-  ).flat();
+    await Promise.all(BIO_QUERIES.map((q) => searchNews(q, { display: 100, sort: "date" })))
+  )
+    .flat()
+    .map((x) => ({ ts: Number.isNaN(x.ts) ? 0 : x.ts, title: x.title, link: x.link }));
   // 제목 중복 제거
   const seen = new Set<string>();
   const news = raw.filter((x) => (seen.has(x.title) ? false : (seen.add(x.title), true)));
@@ -486,28 +431,7 @@ export async function scanBioCatalyst(): Promise<BioResult> {
     })
     .filter((e) => e.code); // 상장 종목만
 
-  const cutoff = now.getTime() - 4 * 864e5;
+  const cutoff = Date.now() - 4 * 864e5;
   const today = events.filter((e) => Date.parse(`${e.date}T00:00:00+09:00`) >= cutoff);
   return { rule: "바이오주 — FDA 임상 진입(국내)", today, events };
-}
-
-// 원본 검색(키워드 그대로, 날짜창)
-async function fetchNewsRaw(query: string, after: string, before: string) {
-  try {
-    const q = encodeURIComponent(`${query} after:${after} before:${before}`);
-    const txt = await (
-      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, { cache: "no-store" })
-    ).text();
-    const out: { ts: number; title: string; link: string }[] = [];
-    for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-      const b = m[1];
-      const t = b.match(/<title>([^<]+)<\/title>/)?.[1];
-      const pd = b.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
-      const link = b.match(/<link>([^<]+)<\/link>/)?.[1] ?? "";
-      if (t && pd) out.push({ ts: Date.parse(pd), title: t.replace(/&#39;/g, "'").replace(/&quot;/g, '"'), link });
-    }
-    return out;
-  } catch {
-    return [];
-  }
 }

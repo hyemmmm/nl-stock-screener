@@ -4,6 +4,7 @@
 //   등락률·거래량배수·시황(코스피)·재료(과거 뉴스)를 붙인 뒤 유형별로 집계.
 //   무료/무키(네이버·구글). 유형 분류만 Groq(있으면).
 // ──────────────────────────────────────────────────────────────────────────
+import { searchNews } from "./news";
 
 const NAVER = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
 
@@ -62,47 +63,21 @@ async function fetchKospiMap(days: number): Promise<Record<string, number>> {
   return map;
 }
 
-// 급등일의 과거 뉴스 (구글뉴스 after/before)
+// 급등일의 뉴스 (네이버 검색). 날짜창 미지원 → 해당일 ±3일 근처 기사만 추림.
+// (최근 급등일은 매칭되고, 아주 오래된 급등일은 최근 100건에 없어 비어있을 수 있음)
 async function fetchDayNews(
   name: string,
   ymdDate: string,
 ): Promise<{ title: string; link: string }[]> {
-  const y = ymdDate.slice(0, 4),
-    mo = ymdDate.slice(4, 6),
-    da = ymdDate.slice(6, 8);
-  const after = `${y}-${mo}-${da}`;
-  const bd = new Date(+y, +mo - 1, +da + 3);
-  const before = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, "0")}-${String(
-    bd.getDate(),
-  ).padStart(2, "0")}`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const q = encodeURIComponent(`${name} after:${after} before:${before}`);
-    const txt = await (
-      await fetch(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`, {
-        cache: "no-store",
-        signal: ctrl.signal,
-      })
-    ).text();
-    const out: { title: string; link: string }[] = [];
-    for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-      const b = m[1];
-      const rawTitle = b.match(/<title>([^<]+)<\/title>/)?.[1];
-      const link = b.match(/<link>([^<]+)<\/link>/)?.[1] ?? "";
-      if (!rawTitle) continue;
-      out.push({
-        title: rawTitle.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"),
-        link,
-      });
-      if (out.length >= 2) break;
-    }
-    return out;
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
+  const y = +ymdDate.slice(0, 4),
+    mo = +ymdDate.slice(4, 6),
+    da = +ymdDate.slice(6, 8);
+  const target = Date.UTC(y, mo - 1, da);
+  const items = await searchNews(name, { display: 100, sort: "date" });
+  return items
+    .filter((x) => !Number.isNaN(x.ts) && Math.abs(x.ts - target) <= 3 * 864e5)
+    .slice(0, 2)
+    .map(({ title, link }) => ({ title, link }));
 }
 
 const CATEGORIES = ["실적", "공급계약·수주", "신제품·기술", "업황·테마", "지분·경영", "기타"];

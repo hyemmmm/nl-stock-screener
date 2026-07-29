@@ -3,40 +3,41 @@
 // 뉴스(구글뉴스 RSS) → Groq LLM이 이슈 선정+테마 매칭 → 네이버 테마 관련주.
 // 무료/무키(구글·네이버) + Groq 키만.
 // ──────────────────────────────────────────────────────────────────────────
+import { searchNews } from "./news";
 
 const dec = (buf: ArrayBuffer) => new TextDecoder("euc-kr").decode(Buffer.from(buf));
-const clean = (s: string) =>
-  s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
-// 장마감(15:30 KST) 이후 뉴스만 — 내일 장에 반영될 재료만 걸러내기 위함.
+// "재료성" 넓은 검색어 — 없다가 생긴/있다가 사라진 구조적 변화 위주.
+const ISSUE_QUERIES = [
+  "정부 정책",
+  "규제 완화",
+  "규제 강화",
+  "승인",
+  "허가",
+  "수주 계약",
+  "투자 발표",
+  "신기술",
+  "관세",
+  "확산",
+];
+
+// 장마감(15:30 KST) 이후 뉴스만 — 내일 장에 반영될 재료만.
 async function fetchNews(cutoffMs: number): Promise<string[]> {
-  const items: { title: string; ts: number }[] = [];
   const seen = new Set<string>();
-  // 일반 뉴스 위주 — 증시 자체(BUSINESS)보다 현실 사건(정치·국제·기술·과학·산업)에서 재료를 찾는다.
-  for (const t of ["NATION", "WORLD", "TECHNOLOGY", "SCIENCE", "HEALTH", "BUSINESS"]) {
-    try {
-      const txt = await (
-        await fetch(
-          `https://news.google.com/rss/headlines/section/topic/${t}?hl=ko&gl=KR&ceid=KR:ko`,
-          { cache: "no-store" },
-        )
-      ).text();
-      for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-        const block = m[1];
-        const title = block.match(/<title>([^<]+)<\/title>/)?.[1];
-        if (!title) continue;
-        const pd = block.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
-        const ts = pd ? Date.parse(pd) : NaN;
-        if (!Number.isNaN(ts) && ts < cutoffMs) continue; // 마감 이전 뉴스 제외
-        const c = clean(title);
-        if (seen.has(c)) continue;
-        seen.add(c);
-        items.push({ title: c, ts: Number.isNaN(ts) ? 0 : ts });
-      }
-    } catch {}
+  const items: { title: string; ts: number }[] = [];
+  const results = await Promise.all(
+    ISSUE_QUERIES.map((q) => searchNews(q, { display: 30, sort: "date" })),
+  );
+  for (const list of results) {
+    for (const x of list) {
+      if (!Number.isNaN(x.ts) && x.ts < cutoffMs) continue; // 마감 이전 제외
+      if (seen.has(x.title)) continue;
+      seen.add(x.title);
+      items.push({ title: x.title, ts: Number.isNaN(x.ts) ? 0 : x.ts });
+    }
   }
-  items.sort((a, b) => b.ts - a.ts); // 최신순
-  return items.slice(0, 60).map((i) => i.title);
+  items.sort((a, b) => b.ts - a.ts);
+  return items.slice(0, 80).map((i) => i.title);
 }
 
 // 방금 지난 가장 최근의 15:30 KST(장마감) 시각(ms). 마감 전이면 전 거래일 마감 기준.

@@ -7,6 +7,7 @@
 
 import { promises as fs } from "fs";
 import path from "path";
+import { searchNews } from "./news";
 
 const dec = (buf: ArrayBuffer) => new TextDecoder("euc-kr").decode(Buffer.from(buf));
 const NAVER = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
@@ -70,40 +71,16 @@ async function fetchRank(url: string): Promise<Omit<Mover, "tags" | "news">[]> {
   }
 }
 
-// 구글뉴스 검색 → 최근 이틀 내 헤드라인 top N.
+// 네이버 뉴스 검색 → 최근 이틀 내 헤드라인 top N.
 async function fetchNews(
   name: string,
   cutoffMs: number,
 ): Promise<{ title: string; link: string }[]> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
-      name,
-    )}&hl=ko&gl=KR&ceid=KR:ko`;
-    const txt = await (await fetch(url, { cache: "no-store", signal: ctrl.signal })).text();
-    const items: { title: string; link: string; ts: number }[] = [];
-    for (const m of txt.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-      const b = m[1];
-      const rawTitle = b.match(/<title>([^<]+)<\/title>/)?.[1];
-      const link = b.match(/<link>([^<]+)<\/link>/)?.[1] ?? "";
-      const pd = b.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
-      if (!rawTitle) continue;
-      const ts = pd ? Date.parse(pd) : NaN;
-      if (!Number.isNaN(ts) && ts < cutoffMs) continue; // 오래된 기사 제외
-      const title = rawTitle
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, "&");
-      items.push({ title, link, ts: Number.isNaN(ts) ? 0 : ts });
-    }
-    items.sort((a, b) => b.ts - a.ts);
-    return items.slice(0, 2).map(({ title, link }) => ({ title, link }));
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
+  const items = await searchNews(name, { display: 10, sort: "date" });
+  return items
+    .filter((x) => Number.isNaN(x.ts) || x.ts >= cutoffMs)
+    .slice(0, 2)
+    .map(({ title, link }) => ({ title, link }));
 }
 
 export interface MoversResult {
