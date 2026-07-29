@@ -96,6 +96,12 @@ export default function Home() {
             📡 재료레이더
           </a>
           <a
+            href="/disclosures"
+            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+          >
+            📃 공시
+          </a>
+          <a
             href="/scanner"
             className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
           >
