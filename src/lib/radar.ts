@@ -77,7 +77,7 @@ async function pickCatalysts(headlines: { title: string; link: string }[], since
       headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: process.env.LLM_MODEL || "llama-3.3-70b-versatile",
-        temperature: 0.3,
+        temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -142,4 +142,117 @@ export async function detectCatalysts(): Promise<RadarResult> {
   }));
 
   return { since, catalysts };
+}
+
+// ── 어제 재료 → 오늘 결과 검증 ──────────────────────────────────────────────
+const pad = (n: number) => String(n).padStart(2, "0");
+async function fetchDaily(code: string): Promise<{ date: string; open: number; close: number }[]> {
+  const end = new Date(),
+    start = new Date();
+  start.setDate(start.getDate() - 20);
+  const ymd = (d: Date) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  try {
+    const r = await fetch(
+      `https://api.finance.naver.com/siseJson.naver?symbol=${code}&requestType=1&startTime=${ymd(
+        start,
+      )}&endTime=${ymd(end)}&timeframe=day`,
+      { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" },
+    );
+    return JSON.parse((await r.text()).replace(/'/g, '"').replace(/,\s*\]/g, "]"))
+      .slice(1)
+      .map((x: unknown[]) => ({ date: String(x[0]), open: +(x[1] as number), close: +(x[4] as number) }))
+      .filter((c: { close: number }) => c.close > 0)
+      .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
+export interface ValidatedStock {
+  name: string;
+  code: string;
+  changePct: number | null; // 전일종가 대비 오늘 종가
+  openBuyPct: number | null; // 오늘 시가 매수 → 종가
+}
+export interface ValidatedCatalyst {
+  title: string;
+  type: string;
+  sector: string;
+  stocks: ValidatedStock[];
+  link: string;
+}
+export interface ValidateResult {
+  forDate: string; // 검증 대상일(오늘) M/D
+  since: string; // 재료 수집 기준(어제) M/D
+  catalysts: ValidatedCatalyst[];
+  ready: boolean; // 오늘 종가 데이터 있는지
+}
+
+export async function validateYesterday(): Promise<ValidateResult> {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const Y = kst.getUTCFullYear(),
+    M = kst.getUTCMonth(),
+    D = kst.getUTCDate();
+  const todayOpen = Date.UTC(Y, M, D, 0, 0, 0); // 09:00 KST
+  const yStart = Date.UTC(Y, M, D - 1, 0, 0, 0); // 어제 00:00 KST
+  const todayYmd = `${Y}${pad(M + 1)}${pad(D)}`;
+
+  // 어제~오늘개장전 재료성 헤드라인
+  const lists = await Promise.all(SIGNAL_QUERIES.map((q) => searchNews(q, { display: 100, sort: "date" })));
+  const seen = new Set<string>();
+  const heads: { title: string; link: string }[] = [];
+  for (const list of lists) {
+    for (const x of list) {
+      if (Number.isNaN(x.ts) || x.ts < yStart || x.ts > todayOpen) continue;
+      if (seen.has(x.title)) continue;
+      seen.add(x.title);
+      heads.push({ title: x.title, link: x.link });
+    }
+  }
+  const raw = await pickCatalysts(heads.slice(0, 70), `${M + 1}/${D - 1} 15:30`);
+
+  const names = [...new Set(raw.flatMap((r) => r.stocks || []))].slice(0, 40);
+  const codeMap: Record<string, string> = {};
+  await Promise.all(
+    names.map(async (n) => {
+      const hits = await searchStock(n);
+      if (hits[0]) codeMap[n] = hits[0].code;
+    }),
+  );
+  const codes = [...new Set(Object.values(codeMap))];
+  const pxMap: Record<string, { date: string; open: number; close: number }[]> = {};
+  await Promise.all(codes.map(async (c) => (pxMap[c] = await fetchDaily(c))));
+
+  let ready = false;
+  const move = (code: string): { changePct: number | null; openBuyPct: number | null } => {
+    const rows = pxMap[code];
+    if (!rows) return { changePct: null, openBuyPct: null };
+    const ti = rows.findIndex((r) => r.date === todayYmd);
+    if (ti < 1) return { changePct: null, openBuyPct: null };
+    ready = true;
+    return {
+      changePct: (rows[ti].close / rows[ti - 1].close - 1) * 100,
+      openBuyPct: (rows[ti].close / rows[ti].open - 1) * 100,
+    };
+  };
+
+  const linkOf = (headline: string) =>
+    heads.find((h) => h.title === headline)?.link ??
+    heads.find((h) => headline && h.title.includes(headline.slice(0, 12)))?.link ??
+    "";
+
+  const catalysts: ValidatedCatalyst[] = raw
+    .slice(0, 6)
+    .map((r) => ({
+      title: r.title,
+      type: r.type || "기타",
+      sector: r.sector || "",
+      stocks: (r.stocks || [])
+        .map((n) => ({ name: n, code: codeMap[n] || "", ...move(codeMap[n] || "") }))
+        .filter((s) => s.code),
+      link: linkOf(r.headline),
+    }))
+    .filter((c) => c.stocks.length);
+
+  return { forDate: `${M + 1}/${D}`, since: `${M + 1}/${D - 1}`, catalysts, ready };
 }
