@@ -57,13 +57,14 @@ interface DartRow {
   rcept_dt: string;
 }
 
-export async function todayDisclosures(): Promise<DartResult> {
-  const key = process.env.DART_API_KEY;
-  if (!key) return { date: "", count: 0, items: [] };
-  const k = new Date(Date.now() + 9 * 3600e3);
-  const p2 = (n: number) => String(n).padStart(2, "0");
-  const ymd = `${k.getUTCFullYear()}${p2(k.getUTCMonth() + 1)}${p2(k.getUTCDate())}`;
+const p2 = (n: number) => String(n).padStart(2, "0");
+const order = CATS.map((c) => c.t);
+const dirRank = { 호재: 0, 중립: 1, 악재: 2 } as const;
 
+// 특정일(YYYYMMDD)의 재료성 공시 + 전체 건수
+async function fetchDisclosures(ymd: string): Promise<{ count: number; items: Disclosure[] }> {
+  const key = process.env.DART_API_KEY;
+  if (!key) return { count: 0, items: [] };
   const rows: DartRow[] = [];
   let total = 0;
   for (let page = 1; page <= 6; page++) {
@@ -81,11 +82,10 @@ export async function todayDisclosures(): Promise<DartResult> {
       break;
     }
   }
-
   const seen = new Set<string>();
   const items: Disclosure[] = [];
   for (const x of rows) {
-    if (!/^\d{6}$/.test(x.stock_code || "")) continue; // 상장사만
+    if (!/^\d{6}$/.test(x.stock_code || "")) continue;
     const nm = (x.report_nm || "").trim();
     const cat = classify(nm);
     if (!cat) continue;
@@ -101,10 +101,129 @@ export async function todayDisclosures(): Promise<DartResult> {
       link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${x.rcept_no}`,
     });
   }
-  // 호재 먼저, 그 안에서 유형 순
-  const order = CATS.map((c) => c.t);
-  const dirRank = { 호재: 0, 중립: 1, 악재: 2 } as const;
   items.sort((a, b) => dirRank[a.dir] - dirRank[b.dir] || order.indexOf(a.type) - order.indexOf(b.type));
+  return { count: total, items };
+}
 
-  return { date: `${k.getUTCMonth() + 1}/${k.getUTCDate()}`, count: total, items };
+export async function todayDisclosures(): Promise<DartResult> {
+  const k = new Date(Date.now() + 9 * 3600e3);
+  const ymd = `${k.getUTCFullYear()}${p2(k.getUTCMonth() + 1)}${p2(k.getUTCDate())}`;
+  const { count, items } = await fetchDisclosures(ymd);
+  return { date: `${k.getUTCMonth() + 1}/${k.getUTCDate()}`, count, items };
+}
+
+// ── 백테스트: 과거 호재 공시 → 다음 거래일 실제 등락 ────────────────────────
+async function fetchDaily(code: string): Promise<{ date: string; open: number; close: number }[]> {
+  const end = new Date(),
+    start = new Date();
+  start.setDate(start.getDate() - 40);
+  const ymd = (d: Date) => `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+  try {
+    const r = await fetch(
+      `https://api.finance.naver.com/siseJson.naver?symbol=${code}&requestType=1&startTime=${ymd(
+        start,
+      )}&endTime=${ymd(end)}&timeframe=day`,
+      { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" },
+    );
+    return JSON.parse((await r.text()).replace(/'/g, '"').replace(/,\s*\]/g, "]"))
+      .slice(1)
+      .map((x: unknown[]) => ({ date: String(x[0]), open: +(x[1] as number), close: +(x[4] as number) }))
+      .filter((c: { close: number }) => c.close > 0)
+      .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
+export interface DiscEvent {
+  date: string; // 공시일 M/D
+  sessionDate: string; // 반응일 M/D
+  name: string;
+  code: string;
+  type: string;
+  title: string;
+  changePct: number | null;
+  openBuyPct: number | null;
+}
+export interface DiscBacktest {
+  days: number;
+  scored: number;
+  upRateOpen: number | null;
+  avgOpen: number | null;
+  avgChange: number | null;
+  byType: { type: string; n: number; upRate: number; avgOpen: number }[];
+  events: DiscEvent[];
+}
+
+const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+
+// 최근 N일 호재 공시 → 다음 거래일 시가매수→종가 채점
+export async function disclosureBacktest(daysBack = 6): Promise<DiscBacktest> {
+  const now = new Date(Date.now() + 9 * 3600e3);
+  const dayList: string[] = [];
+  for (let i = 1; i <= daysBack; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    dayList.push(`${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}`);
+  }
+  // 날짜별 호재 공시 수집(순차 — DART 부하 관리)
+  const raw: { ymd: string; d: Disclosure }[] = [];
+  for (const ymd of dayList) {
+    const { items } = await fetchDisclosures(ymd);
+    for (const it of items) if (it.dir === "호재") raw.push({ ymd, d: it });
+  }
+  // 종목·공시일 중복 제거, 최대 80건
+  const seen = new Set<string>();
+  const picked = raw.filter((x) => {
+    const k = x.ymd + x.d.code;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 80);
+
+  const codes = [...new Set(picked.map((x) => x.d.code))];
+  const px: Record<string, { date: string; open: number; close: number }[]> = {};
+  for (let i = 0; i < codes.length; i += 8) {
+    await Promise.all(codes.slice(i, i + 8).map(async (c) => (px[c] = await fetchDaily(c))));
+  }
+
+  const events: DiscEvent[] = [];
+  for (const { ymd, d } of picked) {
+    const rows = px[d.code];
+    let idx = -1;
+    if (rows) for (let i = 0; i < rows.length; i++) if (rows[i].date > ymd) { idx = i; break; }
+    const ok = idx >= 1;
+    events.push({
+      date: `${+ymd.slice(4, 6)}/${+ymd.slice(6, 8)}`,
+      sessionDate: ok ? `${+rows[idx].date.slice(4, 6)}/${+rows[idx].date.slice(6, 8)}` : "",
+      name: d.name,
+      code: d.code,
+      type: d.type,
+      title: d.title,
+      changePct: ok ? (rows[idx].close / rows[idx - 1].close - 1) * 100 : null,
+      openBuyPct: ok ? (rows[idx].close / rows[idx].open - 1) * 100 : null,
+    });
+  }
+  events.sort((a, b) => b.date.localeCompare(a.date));
+
+  const scored = events.filter((e) => e.openBuyPct != null);
+  const opens = scored.map((e) => e.openBuyPct as number);
+  const changes = scored.map((e) => e.changePct).filter((x): x is number => x != null);
+  const typeMap = new Map<string, number[]>();
+  for (const e of scored) {
+    if (!typeMap.has(e.type)) typeMap.set(e.type, []);
+    typeMap.get(e.type)!.push(e.openBuyPct as number);
+  }
+  const byType = [...typeMap.entries()]
+    .map(([type, xs]) => ({ type, n: xs.length, upRate: (xs.filter((x) => x > 0).length / xs.length) * 100, avgOpen: mean(xs) ?? 0 }))
+    .sort((a, b) => b.avgOpen - a.avgOpen);
+
+  return {
+    days: daysBack,
+    scored: scored.length,
+    upRateOpen: opens.length ? (opens.filter((x) => x > 0).length / opens.length) * 100 : null,
+    avgOpen: mean(opens),
+    avgChange: mean(changes),
+    byType,
+    events,
+  };
 }

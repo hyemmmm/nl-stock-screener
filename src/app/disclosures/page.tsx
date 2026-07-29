@@ -92,8 +92,8 @@ export default function DisclosuresPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/radar" className="text-xs text-zinc-500 hover:text-zinc-300">
-            레이더 →
+          <Link href="/disclosures/backtest" className="text-xs text-indigo-400 hover:text-indigo-300">
+            백테스트 →
           </Link>
           <button
             onClick={load}
