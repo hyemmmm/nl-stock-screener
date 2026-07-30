@@ -6,6 +6,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 import { searchNews } from "./news";
+import { simulate, TP, SL } from "./strategy";
 
 const BASE = "https://opendart.fss.or.kr/api";
 
@@ -118,7 +119,9 @@ export async function todayDisclosures(): Promise<DartResult> {
 }
 
 // ── 백테스트: 과거 호재 공시 → 다음 거래일 실제 등락 ────────────────────────
-async function fetchDaily(code: string): Promise<{ date: string; open: number; close: number }[]> {
+async function fetchDaily(
+  code: string,
+): Promise<{ date: string; open: number; high: number; low: number; close: number }[]> {
   const end = new Date(),
     start = new Date();
   start.setDate(start.getDate() - 40);
@@ -132,7 +135,13 @@ async function fetchDaily(code: string): Promise<{ date: string; open: number; c
     );
     return JSON.parse((await r.text()).replace(/'/g, '"').replace(/,\s*\]/g, "]"))
       .slice(1)
-      .map((x: unknown[]) => ({ date: String(x[0]), open: +(x[1] as number), close: +(x[4] as number) }))
+      .map((x: unknown[]) => ({
+        date: String(x[0]),
+        open: +(x[1] as number),
+        high: +(x[2] as number),
+        low: +(x[3] as number),
+        close: +(x[4] as number),
+      }))
       .filter((c: { close: number }) => c.close > 0)
       .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
   } catch {
@@ -147,8 +156,12 @@ export interface DiscEvent {
   code: string;
   type: string;
   title: string;
-  changePct: number | null;
-  openBuyPct: number | null;
+  // 내 전략(시가매수 → +3% 절반익절 / -5% 손절 / 나머지 종가청산) 결과
+  stratRet: number | null; // 전략 수익률
+  maxUp: number | null; // 당일 최대 상승(위꼬리 포함)
+  maxDown: number | null; // 당일 최대 하락
+  closeRet: number | null; // 시가→종가 (참고)
+  exit: string; // 청산 경로
   hot: boolean; // 공시일에 특징주·테마 뉴스로 부각됐는지 (시황 일치 여부)
   hotNote: string; // 근거 헤드라인 일부
 }
@@ -157,9 +170,12 @@ export interface DiscBacktest {
   dates: string[]; // 선택 가능한 공시일 목록 (YYYYMMDD)
   selected: string | null; // 특정 날짜만 조회한 경우
   scored: number;
-  upRateOpen: number | null;
-  avgOpen: number | null;
-  avgChange: number | null;
+  // 전략 기준 성적
+  avgStrat: number | null; // 평균 전략 수익률
+  winRate: number | null; // 전략 수익 > 0 비율
+  tpRate: number | null; // +3% 도달(위꼬리 포함) 비율
+  slRate: number | null; // -5% 손절 비율
+  avgClose: number | null; // 종가 청산만 했을 때 평균 (비교용)
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
   // 시황 분해 — "공시일에 테마/특징주로 부각된 종목의 공시가 더 먹히나" 검증
   byHot: { label: string; n: number; upRate: number; avgOpen: number }[];
@@ -226,7 +242,7 @@ export async function disclosureBacktest(
   }).slice(0, 80);
 
   const codes = [...new Set(picked.map((x) => x.d.code))];
-  const px: Record<string, { date: string; open: number; close: number }[]> = {};
+  const px: Record<string, { date: string; open: number; high: number; low: number; close: number }[]> = {};
   for (let i = 0; i < codes.length; i += 8) {
     await Promise.all(codes.slice(i, i + 8).map(async (c) => (px[c] = await fetchDaily(c))));
   }
@@ -239,6 +255,7 @@ export async function disclosureBacktest(
     let idx = -1;
     if (rows) for (let i = 0; i < rows.length; i++) if (rows[i].date > ymd) { idx = i; break; }
     const ok = idx >= 1;
+    const sim = ok ? simulate(rows[idx]) : null;
     events.push({
       date: `${+ymd.slice(4, 6)}/${+ymd.slice(6, 8)}`,
       sessionDate: ok ? `${+rows[idx].date.slice(4, 6)}/${+rows[idx].date.slice(6, 8)}` : "",
@@ -246,20 +263,24 @@ export async function disclosureBacktest(
       code: d.code,
       type: d.type,
       title: d.title,
-      changePct: ok ? (rows[idx].close / rows[idx - 1].close - 1) * 100 : null,
-      openBuyPct: ok ? (rows[idx].close / rows[idx].open - 1) * 100 : null,
+      stratRet: sim?.ret ?? null,
+      maxUp: sim?.maxUp ?? null,
+      maxDown: sim?.maxDown ?? null,
+      closeRet: sim?.closeRet ?? null,
+      exit: sim?.exit ?? "",
       ...hotOf(buzz, ymd, d.name),
     });
   }
   events.sort((a, b) => b.date.localeCompare(a.date));
 
-  const scored = events.filter((e) => e.openBuyPct != null);
-  const opens = scored.map((e) => e.openBuyPct as number);
-  const changes = scored.map((e) => e.changePct).filter((x): x is number => x != null);
+  // 채점: 전략 수익 기준
+  const scored = events.filter((e) => e.stratRet != null);
+  const rets = scored.map((e) => e.stratRet as number);
+  const closes = scored.map((e) => e.closeRet).filter((x): x is number => x != null);
   const typeMap = new Map<string, number[]>();
   for (const e of scored) {
     if (!typeMap.has(e.type)) typeMap.set(e.type, []);
-    typeMap.get(e.type)!.push(e.openBuyPct as number);
+    typeMap.get(e.type)!.push(e.stratRet as number);
   }
   const byType = [...typeMap.entries()]
     .map(([type, xs]) => ({ type, n: xs.length, upRate: (xs.filter((x) => x > 0).length / xs.length) * 100, avgOpen: mean(xs) ?? 0 }))
@@ -267,7 +288,7 @@ export async function disclosureBacktest(
 
   // 시황 분해: 공시일 부각(특징주 언급) 여부
   const grp = (label: string, xs: DiscEvent[]) => {
-    const v = xs.map((e) => e.openBuyPct as number).filter((x) => x != null);
+    const v = xs.map((e) => e.stratRet).filter((x): x is number => x != null);
     return {
       label,
       n: v.length,
@@ -292,9 +313,15 @@ export async function disclosureBacktest(
     dates: allDays,
     selected: onlyDate ?? null,
     scored: scored.length,
-    upRateOpen: opens.length ? (opens.filter((x) => x > 0).length / opens.length) * 100 : null,
-    avgOpen: mean(opens),
-    avgChange: mean(changes),
+    avgStrat: mean(rets),
+    winRate: rets.length ? (rets.filter((x) => x > 0).length / rets.length) * 100 : null,
+    tpRate: scored.length
+      ? (scored.filter((e) => (e.maxUp ?? -99) >= TP).length / scored.length) * 100
+      : null,
+    slRate: scored.length
+      ? (scored.filter((e) => (e.maxDown ?? 99) <= SL).length / scored.length) * 100
+      : null,
+    avgClose: mean(closes),
     byType,
     byHot,
     hotThemes,

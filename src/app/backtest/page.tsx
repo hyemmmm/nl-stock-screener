@@ -10,8 +10,11 @@ interface DiscEvent {
   code: string;
   type: string;
   title: string;
-  changePct: number | null;
-  openBuyPct: number | null;
+  stratRet: number | null;
+  maxUp: number | null;
+  maxDown: number | null;
+  closeRet: number | null;
+  exit: string;
   hot: boolean;
   hotNote: string;
 }
@@ -20,9 +23,11 @@ interface DiscBacktest {
   dates: string[];
   selected: string | null;
   scored: number;
-  upRateOpen: number | null;
-  avgOpen: number | null;
-  avgChange: number | null;
+  avgStrat: number | null;
+  winRate: number | null;
+  tpRate: number | null;
+  slRate: number | null;
+  avgClose: number | null;
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
   byHot: { label: string; n: number; upRate: number; avgOpen: number }[];
   hotThemes: { date: string; heads: string[] }[];
@@ -81,7 +86,8 @@ export default function DiscBacktestPage() {
               <>최근 {b?.days ?? 6}일</>
             )}{" "}
             <span className="text-up">🔺호재 공시</span> → 다음 거래일{" "}
-            <span className="text-indigo-400">시가매수→종가</span>로 채점.
+            <span className="text-indigo-400">내 전략</span>으로 채점 (시가 매수 → +3% 절반 익절 /
+            -5% 손절 / 나머지 종가 청산).
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -126,10 +132,22 @@ export default function DiscBacktestPage() {
       {b && (
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="적중률 (시가매수)" value={b.upRateOpen == null ? "—" : `${b.upRateOpen.toFixed(0)}%`} />
-            <Stat label="평균 · 시가매수" value={pct(b.avgOpen)} valueClass={cls(b.avgOpen)} />
-            <Stat label="평균 · 전일대비" value={pct(b.avgChange)} valueClass={cls(b.avgChange)} />
-            <Stat label="채점 건수" value={`${b.scored}건`} />
+            <Stat
+              label="전략 평균수익"
+              value={pct(b.avgStrat)}
+              valueClass={cls(b.avgStrat)}
+            />
+            <Stat label="승률 (전략)" value={b.winRate == null ? "—" : `${b.winRate.toFixed(0)}%`} />
+            <Stat
+              label="+3% 터치율"
+              value={b.tpRate == null ? "—" : `${b.tpRate.toFixed(0)}%`}
+              valueClass="text-up"
+            />
+            <Stat
+              label="-5% 손절률"
+              value={b.slRate == null ? "—" : `${b.slRate.toFixed(0)}%`}
+              valueClass="text-down"
+            />
           </div>
 
           {b.byHot?.length > 0 && (
@@ -204,8 +222,9 @@ export default function DiscBacktestPage() {
                   <tr className="border-b border-ink-600">
                     <th className="px-3 py-2 text-left font-medium">공시→반응</th>
                     <th className="px-3 py-2 text-left font-medium">종목 / 유형</th>
-                    <th className="px-2 py-2 text-right font-medium">전일대비</th>
-                    <th className="px-2 py-2 text-right font-medium">시가매수</th>
+                    <th className="px-2 py-2 text-right font-medium">고가/저가</th>
+                    <th className="px-2 py-2 text-right font-medium">종가</th>
+                    <th className="px-2 py-2 text-right font-medium">전략</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -231,9 +250,23 @@ export default function DiscBacktestPage() {
                           </span>
                         )}
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right ${cls(e.changePct)}`}>{pct(e.changePct)}</td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(e.openBuyPct)}`}>
-                        {pct(e.openBuyPct)}
+                      <td className="whitespace-nowrap px-2 py-2 text-right text-xs">
+                        <span className={e.maxUp != null && e.maxUp >= 3 ? "font-bold text-up" : "text-up/70"}>
+                          {pct(e.maxUp)}
+                        </span>
+                        <span className="text-zinc-600"> / </span>
+                        <span
+                          className={e.maxDown != null && e.maxDown <= -5 ? "font-bold text-down" : "text-down/70"}
+                        >
+                          {pct(e.maxDown)}
+                        </span>
+                      </td>
+                      <td className={`whitespace-nowrap px-2 py-2 text-right text-xs ${cls(e.closeRet)}`}>
+                        {pct(e.closeRet)}
+                      </td>
+                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(e.stratRet)}`}>
+                        {pct(e.stratRet)}
+                        {e.exit && <div className="text-[10px] font-normal text-zinc-600">{e.exit}</div>}
                       </td>
                     </tr>
                   ))}

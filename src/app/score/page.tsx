@@ -10,16 +10,21 @@ interface Row {
   title: string;
   name: string;
   code: string;
-  changePct: number | null;
-  openBuyPct: number | null;
+  stratRet: number | null;
+  maxUp: number | null;
+  maxDown: number | null;
+  closeRet: number | null;
+  exit: string;
 }
 interface RadarBoard {
   totalDays: number;
   scoredDays: number;
   pendingDays: number;
-  upRateOpen: number | null;
-  avgOpen: number | null;
-  avgChange: number | null;
+  winRate: number | null;
+  avgStrat: number | null;
+  tpRate: number | null;
+  slRate: number | null;
+  avgClose: number | null;
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
   rows: Row[];
   error?: string;
@@ -60,7 +65,7 @@ export default function RadarScorePage() {
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">레이더 성적표</h1>
           <p className="mt-2 text-sm text-zinc-400">
             매일 감지한 재료·관련주가 다음날 실제로 올랐는지 누적 채점 →{" "}
-            <span className="text-zinc-600">시가매수→종가 기준</span>
+            <span className="text-zinc-600">내 전략 기준 (시가매수 → +3% 절반익절 / -5% 손절 / 종가청산)</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -98,9 +103,10 @@ export default function RadarScorePage() {
       {b && b.totalDays > 0 && (
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="적중률 (시가매수)" value={b.upRateOpen == null ? "—" : `${b.upRateOpen.toFixed(0)}%`} />
-            <Stat label="평균 · 시가매수" value={pct(b.avgOpen)} valueClass={cls(b.avgOpen)} />
-            <Stat label="평균 · 전일대비" value={pct(b.avgChange)} valueClass={cls(b.avgChange)} />
+            <Stat label="전략 평균수익" value={pct(b.avgStrat)} valueClass={cls(b.avgStrat)} />
+            <Stat label="승률" value={b.winRate == null ? "—" : `${b.winRate.toFixed(0)}%`} />
+            <Stat label="+3% 터치율" value={b.tpRate == null ? "—" : `${b.tpRate.toFixed(0)}%`} valueClass="text-up" />
+            <Stat label="-5% 손절률" value={b.slRate == null ? "—" : `${b.slRate.toFixed(0)}%`} valueClass="text-down" />
             <Stat label="채점/대기" value={`${b.scoredDays} / ${b.pendingDays}일`} />
           </div>
 
@@ -140,8 +146,8 @@ export default function RadarScorePage() {
                   <tr className="border-b border-ink-600">
                     <th className="px-3 py-2 text-left font-medium">감지일</th>
                     <th className="px-3 py-2 text-left font-medium">종목 / 재료</th>
-                    <th className="px-2 py-2 text-right font-medium">전일대비</th>
-                    <th className="px-2 py-2 text-right font-medium">시가매수</th>
+                    <th className="px-2 py-2 text-right font-medium">고가/저가</th>
+                    <th className="px-2 py-2 text-right font-medium">전략</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -159,9 +165,18 @@ export default function RadarScorePage() {
                           {r.title.length > 26 ? r.title.slice(0, 26) + "…" : r.title}
                         </div>
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right ${cls(r.changePct)}`}>{pct(r.changePct)}</td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(r.openBuyPct)}`}>
-                        {pct(r.openBuyPct)}
+                      <td className="whitespace-nowrap px-2 py-2 text-right text-xs">
+                        <span className={r.maxUp != null && r.maxUp >= 3 ? "font-bold text-up" : "text-up/70"}>
+                          {pct(r.maxUp)}
+                        </span>
+                        <span className="text-zinc-600"> / </span>
+                        <span className={r.maxDown != null && r.maxDown <= -5 ? "font-bold text-down" : "text-down/70"}>
+                          {pct(r.maxDown)}
+                        </span>
+                      </td>
+                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(r.stratRet)}`}>
+                        {pct(r.stratRet)}
+                        {r.exit && <div className="text-[10px] font-normal text-zinc-600">{r.exit}</div>}
                       </td>
                     </tr>
                   ))}
@@ -173,7 +188,7 @@ export default function RadarScorePage() {
       )}
 
       <footer className="mt-10 text-center text-xs text-zinc-600">
-        시가매수→종가 = 다음 거래일 시가 매수 · 관련주 AI 추정 · 데이터는 매일 축적 · 참고용
+        전략 = 다음 거래일 시가 매수 → +3% 절반 익절 / -5% 손절 / 나머지 종가 청산 · 관련주 AI 추정 · 데이터는 매일 축적 · 참고용
       </footer>
     </main>
   );

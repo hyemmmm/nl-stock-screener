@@ -5,6 +5,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 import { promises as fs } from "fs";
 import path from "path";
+import { simulate, TP, SL } from "./strategy";
 // 기록 입력 (내일 후보 파이프라인이 넘겨주는 최소 형태)
 export interface PickInput {
   since: string;
@@ -63,7 +64,9 @@ export async function recordPicks(res: PickInput): Promise<boolean> {
 }
 
 // ── 채점 ──────────────────────────────────────────────────────────────────
-async function fetchDaily(code: string): Promise<{ date: string; open: number; close: number }[]> {
+async function fetchDaily(
+  code: string,
+): Promise<{ date: string; open: number; high: number; low: number; close: number }[]> {
   const end = new Date(),
     start = new Date();
   start.setDate(start.getDate() - 30);
@@ -77,7 +80,13 @@ async function fetchDaily(code: string): Promise<{ date: string; open: number; c
     );
     return JSON.parse((await r.text()).replace(/'/g, '"').replace(/,\s*\]/g, "]"))
       .slice(1)
-      .map((x: unknown[]) => ({ date: String(x[0]), open: +(x[1] as number), close: +(x[4] as number) }))
+      .map((x: unknown[]) => ({
+        date: String(x[0]),
+        open: +(x[1] as number),
+        high: +(x[2] as number),
+        low: +(x[3] as number),
+        close: +(x[4] as number),
+      }))
       .filter((c: { close: number }) => c.close > 0)
       .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
   } catch {
@@ -89,8 +98,11 @@ export interface ScoredStock {
   name: string;
   code: string;
   type: string;
-  changePct: number | null; // 전일 대비
-  openBuyPct: number | null; // 시가매수→종가
+  stratRet: number | null; // 내 전략 수익 (+3% 절반익절 / -5% 손절 / 종가청산)
+  maxUp: number | null;
+  maxDown: number | null;
+  closeRet: number | null;
+  exit: string;
 }
 interface ScoreCache {
   [date: string]: { scoredAt: string; sessionDate: string; stocks: ScoredStock[] };
@@ -110,9 +122,11 @@ export interface RadarBoard {
   totalDays: number;
   scoredDays: number;
   pendingDays: number;
-  upRateOpen: number | null; // 시가매수 기준 오른 비율
-  avgOpen: number | null; // 시가매수→종가 평균
-  avgChange: number | null; // 전일 대비 평균
+  winRate: number | null; // 전략 승률
+  avgStrat: number | null; // 전략 평균 수익
+  tpRate: number | null; // +3% 터치율
+  slRate: number | null; // -5% 손절률
+  avgClose: number | null; // 종가청산만 했을 때 평균(비교)
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
   rows: {
     date: string;
@@ -121,8 +135,11 @@ export interface RadarBoard {
     title: string;
     name: string;
     code: string;
-    changePct: number | null;
-    openBuyPct: number | null;
+    stratRet: number | null;
+    maxUp: number | null;
+    maxDown: number | null;
+    closeRet: number | null;
+    exit: string;
   }[];
 }
 
@@ -135,7 +152,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
     if (cache[p.date]) continue;
     const pymd = p.date.replace(/-/g, "");
     const codes = [...new Set(p.catalysts.flatMap((c) => c.stocks.map((s) => s.code)))];
-    const px: Record<string, { date: string; open: number; close: number }[]> = {};
+    const px: Record<string, { date: string; open: number; high: number; low: number; close: number }[]> = {};
     await Promise.all(codes.map(async (c) => (px[c] = await fetchDaily(c))));
 
     const move = (code: string) => {
@@ -148,11 +165,8 @@ export async function getRadarBoard(): Promise<RadarBoard> {
           break;
         }
       if (idx < 1) return null;
-      return {
-        sessionDate: rows[idx].date,
-        changePct: (rows[idx].close / rows[idx - 1].close - 1) * 100,
-        openBuyPct: (rows[idx].close / rows[idx].open - 1) * 100,
-      };
+      const sim = simulate(rows[idx]);
+      return { sessionDate: rows[idx].date, sim };
     };
 
     const stocks: ScoredStock[] = [];
@@ -165,11 +179,14 @@ export async function getRadarBoard(): Promise<RadarBoard> {
           name: s.name,
           code: s.code,
           type: c.type,
-          changePct: m?.changePct ?? null,
-          openBuyPct: m?.openBuyPct ?? null,
+          stratRet: m?.sim.ret ?? null,
+          maxUp: m?.sim.maxUp ?? null,
+          maxDown: m?.sim.maxDown ?? null,
+          closeRet: m?.sim.closeRet ?? null,
+          exit: m?.sim.exit ?? "",
         });
       }
-    if (stocks.some((s) => s.openBuyPct != null))
+    if (stocks.some((s) => s.stratRet != null))
       cache[p.date] = { scoredAt: new Date().toISOString(), sessionDate, stocks };
     else pending++;
   }
@@ -192,19 +209,22 @@ export async function getRadarBoard(): Promise<RadarBoard> {
         title: titleOf.get(`${d}|${s.code}`) ?? "",
         name: s.name,
         code: s.code,
-        changePct: s.changePct,
-        openBuyPct: s.openBuyPct,
+        stratRet: s.stratRet,
+        maxUp: s.maxUp,
+        maxDown: s.maxDown,
+        closeRet: s.closeRet,
+        exit: s.exit,
       });
   }
 
-  const scored = rows.filter((r) => r.openBuyPct != null);
-  const opens = scored.map((r) => r.openBuyPct as number);
-  const changes = scored.map((r) => r.changePct).filter((x): x is number => x != null);
+  const scored = rows.filter((r) => r.stratRet != null);
+  const rets = scored.map((r) => r.stratRet as number);
+  const closes = scored.map((r) => r.closeRet).filter((x): x is number => x != null);
 
   const typeMap = new Map<string, number[]>();
   for (const r of scored) {
     if (!typeMap.has(r.type)) typeMap.set(r.type, []);
-    typeMap.get(r.type)!.push(r.openBuyPct as number);
+    typeMap.get(r.type)!.push(r.stratRet as number);
   }
   const byType = [...typeMap.entries()]
     .map(([type, xs]) => ({
@@ -219,9 +239,11 @@ export async function getRadarBoard(): Promise<RadarBoard> {
     totalDays: picks.length,
     scoredDays: Object.keys(cache).length,
     pendingDays: pending,
-    upRateOpen: opens.length ? (opens.filter((x) => x > 0).length / opens.length) * 100 : null,
-    avgOpen: mean(opens),
-    avgChange: mean(changes),
+    winRate: rets.length ? (rets.filter((x) => x > 0).length / rets.length) * 100 : null,
+    avgStrat: mean(rets),
+    tpRate: scored.length ? (scored.filter((r) => (r.maxUp ?? -99) >= TP).length / scored.length) * 100 : null,
+    slRate: scored.length ? (scored.filter((r) => (r.maxDown ?? 99) <= SL).length / scored.length) * 100 : null,
+    avgClose: mean(closes),
     byType,
     rows,
   };
