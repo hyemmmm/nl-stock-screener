@@ -15,6 +15,7 @@ interface Row {
   maxDown: number | null;
   closeRet: number | null;
   exit: string;
+  detail: string;
 }
 interface RadarBoard {
   totalDays: number;
@@ -147,7 +148,7 @@ export default function RadarScorePage() {
                     <th className="px-3 py-2 text-left font-medium">감지일</th>
                     <th className="px-3 py-2 text-left font-medium">종목 / 재료</th>
                     <th className="px-2 py-2 text-right font-medium">고가/저가</th>
-                    <th className="px-2 py-2 text-right font-medium">전략</th>
+                    <th className="px-2 py-2 text-right font-medium">전략 수익</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -174,9 +175,11 @@ export default function RadarScorePage() {
                           {pct(r.maxDown)}
                         </span>
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(r.stratRet)}`}>
-                        {pct(r.stratRet)}
-                        {r.exit && <div className="text-[10px] font-normal text-zinc-600">{r.exit}</div>}
+                      <td className="whitespace-nowrap px-2 py-2 text-right">
+                        <div className={`text-base font-bold ${cls(r.stratRet)}`}>{pct(r.stratRet)}</div>
+                        {r.detail && (
+                          <div className="text-[10px] font-normal text-zinc-500">{r.detail}</div>
+                        )}
                       </td>
                     </tr>
                   ))}

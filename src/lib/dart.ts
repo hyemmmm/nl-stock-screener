@@ -162,6 +162,7 @@ export interface DiscEvent {
   maxDown: number | null; // 당일 최대 하락
   closeRet: number | null; // 시가→종가 (참고)
   exit: string; // 청산 경로
+  detail: string; // 계산 내역
   hot: boolean; // 공시일에 특징주·테마 뉴스로 부각됐는지 (시황 일치 여부)
   hotNote: string; // 근거 헤드라인 일부
 }
@@ -268,6 +269,7 @@ export async function disclosureBacktest(
       maxDown: sim?.maxDown ?? null,
       closeRet: sim?.closeRet ?? null,
       exit: sim?.exit ?? "",
+      detail: sim?.detail ?? "",
       ...hotOf(buzz, ymd, d.name),
     });
   }

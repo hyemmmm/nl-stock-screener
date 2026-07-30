@@ -15,6 +15,7 @@ interface DiscEvent {
   maxDown: number | null;
   closeRet: number | null;
   exit: string;
+  detail: string;
   hot: boolean;
   hotNote: string;
 }
@@ -224,7 +225,7 @@ export default function DiscBacktestPage() {
                     <th className="px-3 py-2 text-left font-medium">종목 / 유형</th>
                     <th className="px-2 py-2 text-right font-medium">고가/저가</th>
                     <th className="px-2 py-2 text-right font-medium">종가</th>
-                    <th className="px-2 py-2 text-right font-medium">전략</th>
+                    <th className="px-2 py-2 text-right font-medium">전략 수익</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -264,9 +265,11 @@ export default function DiscBacktestPage() {
                       <td className={`whitespace-nowrap px-2 py-2 text-right text-xs ${cls(e.closeRet)}`}>
                         {pct(e.closeRet)}
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(e.stratRet)}`}>
-                        {pct(e.stratRet)}
-                        {e.exit && <div className="text-[10px] font-normal text-zinc-600">{e.exit}</div>}
+                      <td className="whitespace-nowrap px-2 py-2 text-right">
+                        <div className={`text-base font-bold ${cls(e.stratRet)}`}>{pct(e.stratRet)}</div>
+                        {e.detail && (
+                          <div className="text-[10px] font-normal text-zinc-500">{e.detail}</div>
+                        )}
                       </td>
                     </tr>
                   ))}

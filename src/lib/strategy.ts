@@ -26,7 +26,10 @@ export interface StrategyResult {
   tpHit: boolean; // +3% 도달 (위꼬리 포함)
   slHit: boolean; // -5% 도달
   exit: "익절+손절" | "익절+종가" | "손절" | "종가";
+  detail: string; // 계산 내역 (예: "절반 +3% · 절반 종가 +3.7%")
 }
+
+const f = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
 
 export function simulate(bar: Bar): StrategyResult {
   const { open, high, low, close } = bar;
@@ -39,25 +42,29 @@ export function simulate(bar: Bar): StrategyResult {
   let ret: number;
   let retWorst: number;
   let exit: StrategyResult["exit"];
+  let detail: string;
 
   if (tpHit && slHit) {
     // 익절 먼저 가정: 절반 +3%, 남은 절반 -5%
     ret = TP_PORTION * TP + (1 - TP_PORTION) * SL;
-    // 보수적: 손절이 먼저였다면 전량 -5%
-    retWorst = SL;
+    retWorst = SL; // 보수적: 손절이 먼저였다면 전량 -5%
     exit = "익절+손절";
+    detail = `절반 ${f(TP)} · 절반 ${f(SL)}`;
   } else if (tpHit) {
     ret = TP_PORTION * TP + (1 - TP_PORTION) * closeRet;
     retWorst = ret;
     exit = "익절+종가";
+    detail = `절반 ${f(TP)} · 절반 종가 ${f(closeRet)}`;
   } else if (slHit) {
     ret = SL;
     retWorst = SL;
     exit = "손절";
+    detail = `전량 ${f(SL)} 손절`;
   } else {
     ret = closeRet;
     retWorst = closeRet;
     exit = "종가";
+    detail = `전량 종가 ${f(closeRet)}`;
   }
-  return { ret, retWorst, maxUp, maxDown, closeRet, tpHit, slHit, exit };
+  return { ret, retWorst, maxUp, maxDown, closeRet, tpHit, slHit, exit, detail };
 }

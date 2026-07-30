@@ -103,6 +103,7 @@ export interface ScoredStock {
   maxDown: number | null;
   closeRet: number | null;
   exit: string;
+  detail: string;
 }
 interface ScoreCache {
   [date: string]: { scoredAt: string; sessionDate: string; stocks: ScoredStock[] };
@@ -140,6 +141,7 @@ export interface RadarBoard {
     maxDown: number | null;
     closeRet: number | null;
     exit: string;
+    detail: string;
   }[];
 }
 
@@ -184,6 +186,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
           maxDown: m?.sim.maxDown ?? null,
           closeRet: m?.sim.closeRet ?? null,
           exit: m?.sim.exit ?? "",
+          detail: m?.sim.detail ?? "",
         });
       }
     if (stocks.some((s) => s.stratRet != null))
@@ -214,6 +217,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
         maxDown: s.maxDown,
         closeRet: s.closeRet,
         exit: s.exit,
+        detail: s.detail ?? "",
       });
   }
 
