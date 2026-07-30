@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   try {
     const result = await buildTomorrow();
     // 저장(후보가 있을 때만 — 실패한 빈 결과로 하루치를 덮지 않도록)
-    if (result.candidates.length || result.rejected.length) {
+    if (result.candidates.length || result.discFeed.length || result.newsFeed.length) {
       await fs.mkdir(DIR, { recursive: true }).catch(() => {});
       await fs.writeFile(file, JSON.stringify(result), "utf8").catch(() => {});
     }

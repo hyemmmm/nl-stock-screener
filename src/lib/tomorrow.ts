@@ -112,14 +112,8 @@ async function groqCatalysts(
   };
 }
 
-async function detectNewsCatalysts(
-  cutoff: number,
-  since: string,
-): Promise<{ cats: NewsCatalyst[]; note: string | null; links: Record<string, string> }> {
-  const empty = { cats: [] as NewsCatalyst[], links: {} as Record<string, string> };
-  if (!process.env.GROQ_API_KEY)
-    return { ...empty, note: "GROQ_API_KEY 없음 — 뉴스 재료 분석 불가" };
-  // 배치(3개씩)로 네이버 호출
+// 장마감 이후 재료성 뉴스 수집 (필터 없이 전부, 최신순)
+async function collectNews(cutoff: number): Promise<{ title: string; link: string; ts: number }[]> {
   const lists: Awaited<ReturnType<typeof searchNews>>[] = [];
   for (let i = 0; i < SIGNAL_QUERIES.length; i += 3) {
     lists.push(
@@ -129,17 +123,25 @@ async function detectNewsCatalysts(
     );
   }
   const seen = new Set<string>();
-  const heads: string[] = [];
-  const links: Record<string, string> = {};
+  const out: { title: string; link: string; ts: number }[] = [];
   for (const list of lists)
     for (const x of list) {
       if (!Number.isNaN(x.ts) && x.ts < cutoff) continue;
       if (seen.has(x.title)) continue;
       seen.add(x.title);
-      heads.push(x.title);
-      links[x.title] = x.link;
+      out.push({ title: x.title, link: x.link, ts: Number.isNaN(x.ts) ? 0 : x.ts });
     }
-  if (!heads.length) return { ...empty, note: "장마감 이후 재료성 뉴스가 없음" };
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+async function detectNewsCatalysts(
+  news: { title: string; link: string }[],
+  since: string,
+): Promise<{ cats: NewsCatalyst[]; note: string | null }> {
+  if (!process.env.GROQ_API_KEY)
+    return { cats: [], note: "GROQ_API_KEY 없음 — AI 주목 표시 없이 목록만 제공" };
+  const heads = news.map((n) => n.title);
+  if (!heads.length) return { cats: [], note: "장마감 이후 재료성 뉴스가 없음" };
 
   const system = `너는 한국 주식 애널리스트다. 아래는 직전 장마감(${since}) 이후 나온 뉴스 헤드라인이다.
 "어제까지 없던, 새로 생기거나 사라진 구조적 변화"로 내일 특정 업종·테마를 움직일 호재성 재료를 최대 5개 고른다.
@@ -151,8 +153,7 @@ async function detectNewsCatalysts(
 JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|발생·확산|정책·규제|계약·수주","stage":"확정|검토","why":"","stocks":[""],"query":"","headline":""}]}`;
   // 토큰 절약: 헤드라인 50개로 제한
   const user = heads.slice(0, 50).map((h, i) => `[${i}] ${h}`).join("\n");
-  const { cats, note } = await groqCatalysts(system, user);
-  return { cats, note, links };
+  return groqCatalysts(system, user);
 }
 
 
@@ -281,13 +282,35 @@ export interface Candidate {
   link: string; // 근거: DART 공시 원문 / 뉴스 기사
   score: number; // 정렬용
 }
+// 공시 재료 한 줄 (전부 노출 + 링크)
+export interface DiscFeedItem {
+  name: string;
+  code: string;
+  title: string;
+  type: string;
+  dir: "호재" | "악재" | "중립";
+  link: string;
+  repeat?: Repeat; // 같은 유형 과거 공시 반응 (계산된 것만)
+  verdict?: string;
+}
+// 뉴스 재료 한 줄 (장마감 이후 전부 + 링크)
+export interface NewsFeedItem {
+  title: string;
+  link: string;
+  time: string; // HH:MM (KST)
+  aiTag?: string; // AI가 주목한 경우 "규제·정책" 등
+  noise?: boolean; // 지역행사·봉사·인사 등 재료와 무관해 보이는 것(숨김 기본, 토글로 볼 수 있음)
+  strong?: boolean; // 재료성 키워드가 뚜렷한 것(상단 정렬)
+}
+
 export interface TomorrowResult {
   forDate: string; // 내일 M/D (표시용은 '다음 거래일')
   since: string;
   kospiPct: number | null; // 오늘 코스피 등락(시황 게이트)
   topThemes: { name: string; chg: number }[]; // 오늘 부각 테마 top
-  candidates: Candidate[];
-  rejected: Candidate[];
+  candidates: Candidate[]; // AI 주목 (참고용, 걸러진 게 아님)
+  discFeed: DiscFeedItem[]; // 오늘 공시 재료 전부
+  newsFeed: NewsFeedItem[]; // 장마감 이후 뉴스 재료 전부
   note: string | null; // 뉴스 분석 실패/폴백 등 알림
   builtAt?: string; // 생성 시각(ISO) — 캐시 표시용
   cached?: boolean; // 저장된 결과를 그대로 반환했는지
@@ -355,8 +378,11 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   // 테마 목록 (관련주 보강 + 시황 판정에 공용)
   const themes = await fetchThemes().catch(() => [] as Theme[]);
 
-  // 뉴스 재료 → 관련주 코드 → 반복성 (순차: 네이버 부하 관리)
-  const { cats: newsCats, note, links: newsLinks } = await detectNewsCatalysts(cutoff, since);
+  // 뉴스: 장마감 이후 재료성 뉴스 전부 수집 (거르지 않고 목록으로 제공)
+  const rawNews = await collectNews(cutoff);
+  const { cats: newsCats, note } = await detectNewsCatalysts(rawNews.slice(0, 50), since);
+  const newsLinks: Record<string, string> = {};
+  for (const n of rawNews) newsLinks[n.title] = n.link;
   // 헤드라인 원문 → 기사 링크 (부분 일치 폴백)
   const linkOf = (headline: string) => {
     if (!headline) return "";
@@ -389,24 +415,48 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     );
   }
 
-  // 공시 재료(호재만, 최대 12건) → 종목별 반복성
+  // 공시: 오늘 재료성 공시 전부 (호재/악재 그대로 노출), 호재는 과거 반응까지 채점
   const disc = await todayDisclosures();
-  const good = disc.items.filter((d) => d.dir === "호재").slice(0, 12);
-  for (const d of good) {
-    const repeat = await discRepeat(d, todayYmd);
-    const nm = d.title.replace(/\s+$/, "").replace(/^주요사항보고서\(?/, "").replace(/\)$/, "");
-    all.push(
-      judge({
-        source: "공시",
-        title: `${d.name} — ${nm}`, // 회사명을 제목 앞에 (뭐가 뭔지 바로 보이게)
-        type: d.type,
-        stage: "확정",
-        why: `${d.name} ${d.type} 공시 (DART)`,
-        stocks: [{ name: d.name, code: d.code, via: "AI" }],
-        repeat,
-        link: d.link,
-      }),
-    );
+  const cleanNm = (t: string) =>
+    t.replace(/\s+$/, "").replace(/^주요사항보고서\(?/, "").replace(/\)$/, "");
+  const discFeed: DiscFeedItem[] = [];
+  let scored = 0;
+  for (const d of disc.items) {
+    const item: DiscFeedItem = {
+      name: d.name,
+      code: d.code,
+      title: cleanNm(d.title),
+      type: d.type,
+      dir: d.dir,
+      link: d.link,
+    };
+    // 호재는 상위 14건까지 과거 같은 유형 공시 반응을 채점(비용 제한)
+    if (d.dir === "호재" && scored < 14) {
+      scored++;
+      const repeat = await discRepeat(d, todayYmd);
+      item.repeat = repeat;
+      if (repeat.scored > 0 && repeat.avg != null) {
+        item.verdict = `과거 ${repeat.episodes}회 · 평균 ${repeat.avg >= 0 ? "+" : ""}${repeat.avg.toFixed(1)}%${
+          repeat.upRate != null ? ` (상승 ${repeat.upRate.toFixed(0)}%)` : ""
+        }`;
+      } else {
+        item.verdict = "과거 같은 공시 없음 (첫 사례)";
+      }
+      // AI 주목 후보에도 추가 (참고용 랭킹)
+      all.push(
+        judge({
+          source: "공시",
+          title: `${d.name} — ${item.title}`,
+          type: d.type,
+          stage: "확정",
+          why: `${d.name} ${d.type} 공시 (DART)`,
+          stocks: [{ name: d.name, code: d.code, via: "AI" }],
+          repeat,
+          link: d.link,
+        }),
+      );
+    }
+    discFeed.push(item);
   }
 
   // ── 시황: 오늘 부각 테마 top5 + 후보별 테마 매칭 ────────────────────────
@@ -436,8 +486,35 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   }
   for (const c of all) for (const s of c.stocks) s.bigVol = volMap[s.code] || false;
 
-  const candidates = all.filter((c) => c.score >= 0).sort((a, b) => b.score - a.score);
-  const rejected = all.filter((c) => c.score < 0);
+  // AI 주목: 거르지 않고 점수순 정렬만 (판단은 사용자)
+  const candidates = [...all].sort((a, b) => b.score - a.score);
+
+  // 뉴스 피드: 장마감 이후 전부 + AI가 집은 헤드라인에 태그
+  const aiTagOf = new Map<string, string>();
+  for (const nc of newsCats) {
+    const key = (nc.headline || nc.title || "").slice(0, 12);
+    if (key) aiTagOf.set(key, nc.type || "재료");
+  }
+  const hhmm = (ts: number) => {
+    const d = new Date(ts + 9 * 3600e3);
+    return ts ? `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}` : "";
+  };
+  // 재료와 무관해 보이는 잡음(지역행사·봉사·인사·스포츠 등) — 지우지 않고 표시만
+  const NOISE =
+    /봉사|기부|성금|나눔|헌혈|김장|삼계탕|장학|공모전|시상|수상자|축제|바자|캠페인|간담회|위촉|취임|부고|인사말|칼럼|사설|여론조사|응답|리셀러|퀴즈|대학|총장|교수|학생|초등|중학|고교|구청|군수|시장님|동네|맛집|여행|숙박|호텔|골프|프로야구|축구|올림픽|연예|드라마|가요/;
+  const STRONG =
+    /규제|허용|금지|승인|허가|인가|해제|완화|폐지|관세|수주|계약|공급|특징주|급등|상한가|정책|지원금|예산|국책|확진|확산|사고|화재|리콜|제재|보조금|투자|증설|착공|수출|낙찰|선정|타결|합의|시행|입법|통과/;
+  const newsFeed: NewsFeedItem[] = rawNews.slice(0, 120).map((n) => {
+    let aiTag: string | undefined;
+    for (const [k, v] of aiTagOf) if (n.title.includes(k)) aiTag = v;
+    const noise = !aiTag && NOISE.test(n.title);
+    const strong = !!aiTag || (!noise && STRONG.test(n.title));
+    return { title: n.title, link: n.link, time: hhmm(n.ts), aiTag, noise, strong };
+  });
+  // 정렬: AI 주목 → 재료성 강함 → 나머지 → 잡음 (각 그룹 내 최신순)
+  const rank = (x: NewsFeedItem) => (x.aiTag ? 0 : x.noise ? 3 : x.strong ? 1 : 2);
+  newsFeed.sort((a, b) => rank(a) - rank(b) || b.time.localeCompare(a.time));
+
   const t = new Date(kst);
   t.setUTCDate(t.getUTCDate() + 1);
   return {
@@ -446,7 +523,8 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     kospiPct,
     topThemes,
     candidates,
-    rejected,
+    discFeed,
+    newsFeed,
     note,
     builtAt: new Date().toISOString(),
     cached: false,
