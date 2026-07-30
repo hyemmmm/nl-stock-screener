@@ -63,10 +63,62 @@ interface NewsCatalyst {
   why: string;
   stocks: string[];
   query: string; // 반복성 검색용 핵심 키워드
+  headline: string; // 근거 헤드라인 원문 (기사 링크 매칭용)
 }
 
-async function detectNewsCatalysts(cutoff: number, since: string): Promise<NewsCatalyst[]> {
-  if (!process.env.GROQ_API_KEY) return [];
+// Groq 호출 (토큰 한도 초과 시 작은 모델로 폴백). 실패 이유를 함께 반환.
+async function groqCatalysts(
+  system: string,
+  user: string,
+): Promise<{ cats: NewsCatalyst[]; note: string | null }> {
+  const models = [process.env.LLM_MODEL || "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+  let lastErr = "";
+  for (const model of models) {
+    try {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          temperature: 0.1,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+        }),
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (!j.choices) {
+        lastErr = String(j?.error?.message || `HTTP ${r.status}`);
+        continue; // 다음(작은) 모델로 폴백
+      }
+      const cats = (JSON.parse(j.choices[0].message.content).catalysts || []).slice(
+        0,
+        5,
+      ) as NewsCatalyst[];
+      return { cats, note: model === models[0] ? null : `보조 모델(${model})로 분석` };
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const limited = /rate limit|TPD|quota/i.test(lastErr);
+  return {
+    cats: [],
+    note: limited
+      ? "AI 일일 토큰 한도 초과 — 뉴스 재료 분석을 건너뜀 (공시 재료만 표시). 잠시 후 다시 시도하세요."
+      : `뉴스 재료 분석 실패: ${lastErr.slice(0, 80)}`,
+  };
+}
+
+async function detectNewsCatalysts(
+  cutoff: number,
+  since: string,
+): Promise<{ cats: NewsCatalyst[]; note: string | null; links: Record<string, string> }> {
+  const empty = { cats: [] as NewsCatalyst[], links: {} as Record<string, string> };
+  if (!process.env.GROQ_API_KEY)
+    return { ...empty, note: "GROQ_API_KEY 없음 — 뉴스 재료 분석 불가" };
   // 배치(3개씩)로 네이버 호출
   const lists: Awaited<ReturnType<typeof searchNews>>[] = [];
   for (let i = 0; i < SIGNAL_QUERIES.length; i += 3) {
@@ -78,14 +130,16 @@ async function detectNewsCatalysts(cutoff: number, since: string): Promise<NewsC
   }
   const seen = new Set<string>();
   const heads: string[] = [];
+  const links: Record<string, string> = {};
   for (const list of lists)
     for (const x of list) {
       if (!Number.isNaN(x.ts) && x.ts < cutoff) continue;
       if (seen.has(x.title)) continue;
       seen.add(x.title);
       heads.push(x.title);
+      links[x.title] = x.link;
     }
-  if (!heads.length) return [];
+  if (!heads.length) return { ...empty, note: "장마감 이후 재료성 뉴스가 없음" };
 
   const system = `너는 한국 주식 애널리스트다. 아래는 직전 장마감(${since}) 이후 나온 뉴스 헤드라인이다.
 "어제까지 없던, 새로 생기거나 사라진 구조적 변화"로 내일 특정 업종·테마를 움직일 호재성 재료를 최대 5개 고른다.
@@ -93,27 +147,12 @@ async function detectNewsCatalysts(cutoff: number, since: string): Promise<NewsC
 ★ stage: 헤드라인이 확정된 사실(발표·통과·시행·체결)이면 "확정", 검토·추진·풀릴까·전망이면 "검토".
 ★ query: 이 재료를 과거 뉴스에서 찾을 핵심 검색어(3~5단어, 회사명 제외한 사건 키워드).
 ★ stocks: 실제 한국 상장사 5~8개(가능한 많이). 반드시 "현재 상장된" 정확한 종목명으로. 비상장 자회사(예: 포스코건설)·옛 사명(예: 대우조선해양→한화오션)은 쓰지 마라. 대형주뿐 아니라 중소형 수혜주도 포함.
-JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|발생·확산|정책·규제|계약·수주","stage":"확정|검토","why":"","stocks":[""],"query":""}]}`;
-  try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.LLM_MODEL || "llama-3.3-70b-versatile",
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: heads.slice(0, 70).map((h, i) => `[${i}] ${h}`).join("\n") },
-        ],
-      }),
-      cache: "no-store",
-    });
-    const j = await r.json();
-    return (JSON.parse(j.choices[0].message.content).catalysts || []).slice(0, 5) as NewsCatalyst[];
-  } catch {
-    return [];
-  }
+★ headline: 근거로 삼은 헤드라인을 원문 그대로.
+JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|발생·확산|정책·규제|계약·수주","stage":"확정|검토","why":"","stocks":[""],"query":"","headline":""}]}`;
+  // 토큰 절약: 헤드라인 50개로 제한
+  const user = heads.slice(0, 50).map((h, i) => `[${i}] ${h}`).join("\n");
+  const { cats, note } = await groqCatalysts(system, user);
+  return { cats, note, links };
 }
 
 
@@ -239,6 +278,7 @@ export interface Candidate {
   verdict: string; // 판정 코멘트
   themeName: string | null; // 오늘 부각 테마 매칭 (시황)
   themeChg: number | null;
+  link: string; // 근거: DART 공시 원문 / 뉴스 기사
   score: number; // 정렬용
 }
 export interface TomorrowResult {
@@ -248,12 +288,17 @@ export interface TomorrowResult {
   topThemes: { name: string; chg: number }[]; // 오늘 부각 테마 top
   candidates: Candidate[];
   rejected: Candidate[];
+  note: string | null; // 뉴스 분석 실패/폴백 등 알림
+  builtAt?: string; // 생성 시각(ISO) — 캐시 표시용
+  cached?: boolean; // 저장된 결과를 그대로 반환했는지
 }
 
 const fmtYmd = (y: string | null) => (y ? `${+y.slice(4, 6)}/${+y.slice(6, 8)}` : "");
 
 function judge(
-  c: Omit<Candidate, "verdict" | "score" | "freshness" | "themeName" | "themeChg">,
+  c: Omit<Candidate, "verdict" | "score" | "freshness" | "themeName" | "themeChg" | "link"> & {
+    link?: string;
+  },
 ): Candidate {
   const r = c.repeat;
   const fresh = r.episodes === 0;
@@ -279,7 +324,15 @@ function judge(
     verdict += " · '검토' 단계(불확실성)";
     score -= 0.7;
   }
-  const cand = { ...c, freshness, verdict, score, themeName: null, themeChg: null } as Candidate;
+  const cand = {
+    ...c,
+    link: c.link ?? "",
+    freshness,
+    verdict,
+    score,
+    themeName: null,
+    themeChg: null,
+  } as Candidate;
   return reject ? { ...cand, score: -1 } : cand;
 }
 
@@ -303,7 +356,16 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   const themes = await fetchThemes().catch(() => [] as Theme[]);
 
   // 뉴스 재료 → 관련주 코드 → 반복성 (순차: 네이버 부하 관리)
-  const newsCats = await detectNewsCatalysts(cutoff, since);
+  const { cats: newsCats, note, links: newsLinks } = await detectNewsCatalysts(cutoff, since);
+  // 헤드라인 원문 → 기사 링크 (부분 일치 폴백)
+  const linkOf = (headline: string) => {
+    if (!headline) return "";
+    if (newsLinks[headline]) return newsLinks[headline];
+    const key = Object.keys(newsLinks).find(
+      (t) => t.includes(headline.slice(0, 12)) || headline.includes(t.slice(0, 12)),
+    );
+    return key ? newsLinks[key] : "";
+  };
   const all: Candidate[] = [];
   for (const nc of newsCats) {
     const { stocks } = await buildRelatedStocks(nc.stocks || [], themes, [
@@ -322,24 +384,27 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
         why: nc.why,
         stocks,
         repeat,
+        link: linkOf(nc.headline || nc.title),
       }),
     );
   }
 
-  // 공시 재료(호재만, 최대 6종목) → 종목별 반복성
+  // 공시 재료(호재만, 최대 12건) → 종목별 반복성
   const disc = await todayDisclosures();
-  const good = disc.items.filter((d) => d.dir === "호재").slice(0, 6);
+  const good = disc.items.filter((d) => d.dir === "호재").slice(0, 12);
   for (const d of good) {
     const repeat = await discRepeat(d, todayYmd);
+    const nm = d.title.replace(/\s+$/, "").replace(/^주요사항보고서\(?/, "").replace(/\)$/, "");
     all.push(
       judge({
         source: "공시",
-        title: `${d.title.replace(/\s+$/, "")}`,
+        title: `${d.name} — ${nm}`, // 회사명을 제목 앞에 (뭐가 뭔지 바로 보이게)
         type: d.type,
         stage: "확정",
-        why: `${d.name} 공시 (${d.type})`,
+        why: `${d.name} ${d.type} 공시 (DART)`,
         stocks: [{ name: d.name, code: d.code, via: "AI" }],
         repeat,
+        link: d.link,
       }),
     );
   }
@@ -382,5 +447,8 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     topThemes,
     candidates,
     rejected,
+    note,
+    builtAt: new Date().toISOString(),
+    cached: false,
   };
 }

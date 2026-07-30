@@ -29,6 +29,7 @@ interface Candidate {
   verdict: string;
   themeName: string | null;
   themeChg: number | null;
+  link?: string;
   score: number;
 }
 interface TomorrowResult {
@@ -38,6 +39,9 @@ interface TomorrowResult {
   topThemes: { name: string; chg: number }[];
   candidates: Candidate[];
   rejected: Candidate[];
+  note?: string | null;
+  builtAt?: string;
+  cached?: boolean;
   error?: string;
 }
 
@@ -55,11 +59,11 @@ export default function TomorrowPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  async function load(refresh = false) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/tomorrow", { cache: "no-store" });
+      const res = await fetch(`/api/tomorrow${refresh ? "?refresh=1" : ""}`, { cache: "no-store" });
       const json = (await res.json()) as TomorrowResult;
       if (json.error) setError(json.error);
       else setData(json);
@@ -105,14 +109,35 @@ export default function TomorrowPage() {
             재료분석 →
           </Link>
           <button
-            onClick={load}
+            onClick={() => load(true)}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
-            {loading ? "분석 중…" : "새로고침"}
+            {loading ? "분석 중…" : "다시 뽑기"}
           </button>
         </div>
       </header>
+
+      {/* 생성 시각 / 캐시 상태 */}
+      {data?.builtAt && (
+        <p className="mb-3 text-xs text-zinc-500">
+          {data.cached ? "📌 저장된 오늘 후보" : "🆕 방금 생성"} ·{" "}
+          {new Date(data.builtAt).toLocaleString("ko-KR", {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}{" "}
+          기준 · 하루 한 번 고정 (바꾸려면 &apos;다시 뽑기&apos;)
+        </p>
+      )}
+
+      {/* 알림(AI 한도 등) */}
+      {data?.note && (
+        <p className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+          ⚠️ {data.note}
+        </p>
+      )}
 
       {/* 시황 게이트 */}
       {data?.kospiPct != null && (
@@ -206,7 +231,18 @@ export default function TomorrowPage() {
                 </span>
               )}
             </div>
-            <h2 className="text-base font-semibold leading-snug text-white">{c.title}</h2>
+            <h2 className="text-base font-semibold leading-snug text-white">
+              {c.link ? (
+                <a href={c.link} target="_blank" rel="noreferrer" className="hover:underline">
+                  {c.title}
+                  <span className="ml-1.5 text-xs font-normal text-indigo-400">
+                    {c.source === "공시" ? "공시 원문 ↗" : "기사 ↗"}
+                  </span>
+                </a>
+              ) : (
+                c.title
+              )}
+            </h2>
             <p className="mt-1 text-sm text-zinc-400">{c.why}</p>
             <p className="mt-2 rounded-lg bg-ink-900/50 px-3 py-2 text-sm text-zinc-300">
               📊 {c.verdict}
