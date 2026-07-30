@@ -8,7 +8,7 @@
 import { searchNews } from "./news";
 import { searchStock } from "./catalyst";
 import { todayDisclosures, type Disclosure } from "./dart";
-import { fetchThemes, type Theme } from "./issues";
+import { fetchThemes, fetchThemeStocks, type Theme } from "./issues";
 
 const H = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
 const p2 = (n: number) => String(n).padStart(2, "0");
@@ -92,7 +92,7 @@ async function detectNewsCatalysts(cutoff: number, since: string): Promise<NewsC
 ★ 예정·반복·이미 알려진 이벤트 제외. ★ 악재성 사건이면 반사이익 수혜주(경쟁사·대체재·국내 대체 공급사)를 관련주로.
 ★ stage: 헤드라인이 확정된 사실(발표·통과·시행·체결)이면 "확정", 검토·추진·풀릴까·전망이면 "검토".
 ★ query: 이 재료를 과거 뉴스에서 찾을 핵심 검색어(3~5단어, 회사명 제외한 사건 키워드).
-★ stocks: 실제 한국 상장사 2~6개.
+★ stocks: 실제 한국 상장사 5~8개(가능한 많이). 반드시 "현재 상장된" 정확한 종목명으로. 비상장 자회사(예: 포스코건설)·옛 사명(예: 대우조선해양→한화오션)은 쓰지 마라. 대형주뿐 아니라 중소형 수혜주도 포함.
 JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|발생·확산|정책·규제|계약·수주","stage":"확정|검토","why":"","stocks":[""],"query":""}]}`;
   try {
     const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -114,6 +114,36 @@ JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|
   } catch {
     return [];
   }
+}
+
+// 회사명 → 종목코드. 사명변경·표기차이 대응으로 변형까지 시도.
+async function resolveStock(name: string): Promise<{ name: string; code: string } | null> {
+  const variants = [
+    name,
+    name.replace(/\s/g, ""),
+    name.replace(/(지주|홀딩스|그룹)$/, ""),
+    name.replace(/^주식회사\s*/, ""),
+    name.length > 3 ? name.slice(0, name.length - 1) : name, // "포스코건설"→"포스코건"류 부분일치 유도
+  ];
+  const seen = new Set<string>();
+  for (const v of variants) {
+    if (!v || v.length < 2 || seen.has(v)) continue;
+    seen.add(v);
+    const hits = await searchStock(v);
+    if (hits[0]) return { name: hits[0].name, code: hits[0].code };
+  }
+  return null;
+}
+
+// 재료 텍스트로 네이버 테마를 찾아 구성종목을 보강 (실제 상장 종목 다수 확보)
+function matchTheme(themes: Theme[], texts: string[]): Theme | null {
+  const toks = texts
+    .join(" ")
+    .split(/[\s·/(),]+/)
+    .map((x) => x.replace(/업$|주$|산업$/, ""))
+    .filter((x) => x.length >= 2)
+    .slice(0, 12);
+  return themes.find((t) => toks.some((tok) => t.name.includes(tok))) ?? null;
 }
 
 // ── 2) 뉴스 반복성: query로 과거 에피소드 찾고 관련주 반응 채점 ─────────────
@@ -226,6 +256,7 @@ export interface CandStock {
   name: string;
   code: string;
   bigVol?: boolean; // 최근 거래량 1,000만주+ 이력 (표시만, 필터 아님)
+  via?: "AI" | "테마"; // AI가 직접 지목 vs 테마 구성종목 보강(정확도 낮음)
 }
 export interface Candidate {
   source: "뉴스" | "공시";
@@ -299,14 +330,31 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
       ? (kospi[kospi.length - 1].close / kospi[kospi.length - 2].close - 1) * 100
       : null;
 
+  // 테마 목록 (관련주 보강 + 시황 판정에 공용)
+  const themes = await fetchThemes().catch(() => [] as Theme[]);
+
   // 뉴스 재료 → 관련주 코드 → 반복성 (순차: 네이버 부하 관리)
   const newsCats = await detectNewsCatalysts(cutoff, since);
   const all: Candidate[] = [];
   for (const nc of newsCats) {
-    const stocks: { name: string; code: string }[] = [];
-    for (const n of (nc.stocks || []).slice(0, 6)) {
-      const hits = await searchStock(n);
-      if (hits[0]) stocks.push({ name: n, code: hits[0].code });
+    const stocks: CandStock[] = [];
+    const seenCode = new Set<string>();
+    for (const n of (nc.stocks || []).slice(0, 8)) {
+      const hit = await resolveStock(n);
+      if (hit && !seenCode.has(hit.code)) {
+        seenCode.add(hit.code);
+        stocks.push({ ...hit, via: "AI" });
+      }
+    }
+    // 테마 구성종목으로 보강 (관련주가 빈약할 때 실제 상장 종목 채우기)
+    const th = matchTheme(themes, [nc.title, nc.why, nc.query]);
+    if (th && stocks.length < 6) {
+      const ts = await fetchThemeStocks(th.no).catch(() => []);
+      for (const s of ts) {
+        if (stocks.length >= 8 || seenCode.has(s.code)) continue;
+        seenCode.add(s.code);
+        stocks.push({ name: s.name, code: s.code, via: "테마" });
+      }
     }
     if (!stocks.length) continue;
     const repeat = await newsRepeat(nc.query, stocks, todayYmd);
@@ -335,26 +383,19 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
         type: d.type,
         stage: "확정",
         why: `${d.name} 공시 (${d.type})`,
-        stocks: [{ name: d.name, code: d.code }],
+        stocks: [{ name: d.name, code: d.code, via: "AI" }],
         repeat,
       }),
     );
   }
 
-  // ── 시황: 오늘 부각 테마 (네이버 테마 등락) + 후보별 테마 매칭 ──────────
-  const themes = await fetchThemes().catch(() => [] as Theme[]);
+  // ── 시황: 오늘 부각 테마 top5 + 후보별 테마 매칭 ────────────────────────
   const topThemes = [...themes]
     .sort((a, b) => b.chg - a.chg)
     .slice(0, 5)
     .map((t) => ({ name: t.name, chg: t.chg }));
-  const tokensOf = (s: string) =>
-    (s || "")
-      .split(/[\s·/(),]+/)
-      .map((x) => x.replace(/업$|주$|산업$/, ""))
-      .filter((x) => x.length >= 2);
   for (const c of all) {
-    const toks = [...tokensOf(c.why), ...tokensOf(c.title)].slice(0, 8);
-    const hit = themes.find((t) => toks.some((tok) => t.name.includes(tok)));
+    const hit = matchTheme(themes, [c.title, c.why]);
     if (hit) {
       c.themeName = hit.name;
       c.themeChg = hit.chg;

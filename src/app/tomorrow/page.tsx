@@ -16,7 +16,7 @@ interface Candidate {
   type: string;
   stage: string;
   why: string;
-  stocks: { name: string; code: string; bigVol?: boolean }[];
+  stocks: { name: string; code: string; bigVol?: boolean; via?: "AI" | "테마" }[];
   repeat: Repeat;
   freshness: string;
   verdict: string;
@@ -198,23 +198,31 @@ export default function TomorrowPage() {
                 <span className="ml-1 text-xs text-zinc-500">(표본 {c.repeat.scored}건)</span>
               )}
             </p>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {c.stocks.map((s) => (
-                <a
-                  key={s.code}
-                  href={naver(s.code)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-md border border-ink-500 px-2 py-0.5 text-[12px] text-zinc-200 transition-colors hover:border-indigo-500 hover:text-white"
-                >
-                  {s.name}
-                  {s.bigVol && (
-                    <span title="최근 거래량 1,000만주+ 이력" className="ml-1 text-amber-400">
-                      ⚡
-                    </span>
-                  )}
-                </a>
-              ))}
+            <div className="mt-3">
+              <div className="mb-1.5 text-[11px] text-zinc-500">
+                관련주 {c.stocks.length}
+                <span className="ml-1 text-zinc-600">(진한=AI 지목 · 흐린=테마 구성종목)</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {c.stocks.map((s) => (
+                  <a
+                    key={s.code}
+                    href={naver(s.code)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`rounded-md border px-2 py-0.5 text-[12px] transition-colors hover:border-indigo-500 hover:text-white ${
+                      s.via === "테마" ? "border-ink-700 text-zinc-500" : "border-ink-500 text-zinc-200"
+                    }`}
+                  >
+                    {s.name}
+                    {s.bigVol && (
+                      <span title="최근 거래량 1,000만주+ 이력" className="ml-1 text-amber-400">
+                        ⚡
+                      </span>
+                    )}
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
         ))}

@@ -75,7 +75,7 @@ export async function fetchThemes(): Promise<Theme[]> {
   return themes;
 }
 
-async function fetchThemeStocks(no: string): Promise<{ code: string; name: string }[]> {
+export async function fetchThemeStocks(no: string): Promise<{ code: string; name: string }[]> {
   const buf = await (
     await fetch(`https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=${no}`, {
       headers: { referer: "https://finance.naver.com/" },
