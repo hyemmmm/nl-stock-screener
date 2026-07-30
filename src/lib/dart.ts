@@ -5,6 +5,8 @@
 //   무료 키: DART_API_KEY (opendart.fss.or.kr). 데이터센터에서도 잘 됨.
 // ──────────────────────────────────────────────────────────────────────────
 
+import { searchNews } from "./news";
+
 const BASE = "https://opendart.fss.or.kr/api";
 
 export type Dir = "호재" | "악재" | "중립";
@@ -147,27 +149,67 @@ export interface DiscEvent {
   title: string;
   changePct: number | null;
   openBuyPct: number | null;
+  hot: boolean; // 공시일에 특징주·테마 뉴스로 부각됐는지 (시황 일치 여부)
+  hotNote: string; // 근거 헤드라인 일부
 }
 export interface DiscBacktest {
   days: number;
+  dates: string[]; // 선택 가능한 공시일 목록 (YYYYMMDD)
+  selected: string | null; // 특정 날짜만 조회한 경우
   scored: number;
   upRateOpen: number | null;
   avgOpen: number | null;
   avgChange: number | null;
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
+  // 시황 분해 — "공시일에 테마/특징주로 부각된 종목의 공시가 더 먹히나" 검증
+  byHot: { label: string; n: number; upRate: number; avgOpen: number }[];
+  hotThemes: { date: string; heads: string[] }[]; // 날짜별 그날 부각 헤드라인(참고)
   events: DiscEvent[];
 }
 
 const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
 
-// 최근 N일 호재 공시 → 다음 거래일 시가매수→종가 채점
-export async function disclosureBacktest(daysBack = 6): Promise<DiscBacktest> {
+// 시황 = 그날 뭐가 부각됐나. 특징주·테마 뉴스를 날짜별로 모아둔다.
+async function fetchBuzz(): Promise<Record<string, string[]>> {
+  const byDate: Record<string, string[]> = {};
+  const queries = ["특징주", "테마 급등", "상한가"];
+  const lists = await Promise.all(
+    queries.flatMap((q) => [1, 101, 201].map((start) => searchNews(q, { display: 100, sort: "date", start }))),
+  );
+  for (const list of lists)
+    for (const x of list) {
+      if (Number.isNaN(x.ts)) continue;
+      const d = new Date(x.ts + 9 * 3600e3);
+      const ymd = `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}`;
+      (byDate[ymd] = byDate[ymd] || []).push(x.title);
+    }
+  return byDate;
+}
+
+// 공시일에 그 종목이 특징주/테마로 부각됐는지
+function hotOf(
+  buzz: Record<string, string[]>,
+  ymd: string,
+  name: string,
+): { hot: boolean; hotNote: string } {
+  const heads = buzz[ymd] || [];
+  const key = name.replace(/\s/g, "");
+  const hit = heads.find((h) => h.replace(/\s/g, "").includes(key));
+  return { hot: !!hit, hotNote: hit ? hit.slice(0, 60) : "" };
+}
+
+// 최근 N일(또는 특정일) 호재 공시 → 다음 거래일 시가매수→종가 채점
+export async function disclosureBacktest(
+  daysBack = 6,
+  onlyDate?: string | null,
+): Promise<DiscBacktest> {
   const now = new Date(Date.now() + 9 * 3600e3);
-  const dayList: string[] = [];
-  for (let i = 1; i <= daysBack; i++) {
+  const allDays: string[] = [];
+  for (let i = 1; i <= Math.max(daysBack, 10); i++) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
-    dayList.push(`${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}`);
+    allDays.push(`${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}`);
   }
+  const dayList = onlyDate ? [onlyDate] : allDays.slice(0, daysBack);
   // 날짜별 호재 공시 수집(순차 — DART 부하 관리)
   const raw: { ymd: string; d: Disclosure }[] = [];
   for (const ymd of dayList) {
@@ -188,6 +230,8 @@ export async function disclosureBacktest(daysBack = 6): Promise<DiscBacktest> {
   for (let i = 0; i < codes.length; i += 8) {
     await Promise.all(codes.slice(i, i + 8).map(async (c) => (px[c] = await fetchDaily(c))));
   }
+  // 시황: 그날 부각된 것 = 특징주/테마 뉴스에서 찾는다 (공시일 기준 = 매수 전 정보)
+  const buzz = await fetchBuzz();
 
   const events: DiscEvent[] = [];
   for (const { ymd, d } of picked) {
@@ -204,6 +248,7 @@ export async function disclosureBacktest(daysBack = 6): Promise<DiscBacktest> {
       title: d.title,
       changePct: ok ? (rows[idx].close / rows[idx - 1].close - 1) * 100 : null,
       openBuyPct: ok ? (rows[idx].close / rows[idx].open - 1) * 100 : null,
+      ...hotOf(buzz, ymd, d.name),
     });
   }
   events.sort((a, b) => b.date.localeCompare(a.date));
@@ -220,13 +265,39 @@ export async function disclosureBacktest(daysBack = 6): Promise<DiscBacktest> {
     .map(([type, xs]) => ({ type, n: xs.length, upRate: (xs.filter((x) => x > 0).length / xs.length) * 100, avgOpen: mean(xs) ?? 0 }))
     .sort((a, b) => b.avgOpen - a.avgOpen);
 
+  // 시황 분해: 공시일 부각(특징주 언급) 여부
+  const grp = (label: string, xs: DiscEvent[]) => {
+    const v = xs.map((e) => e.openBuyPct as number).filter((x) => x != null);
+    return {
+      label,
+      n: v.length,
+      upRate: v.length ? (v.filter((x) => x > 0).length / v.length) * 100 : 0,
+      avgOpen: mean(v) ?? 0,
+    };
+  };
+  const byHot = [
+    grp("공시일 특징주/테마로 부각 O", scored.filter((e) => e.hot)),
+    grp("부각 X", scored.filter((e) => !e.hot)),
+  ].filter((g) => g.n > 0);
+
+  const hotThemes = dayList
+    .map((ymd) => ({
+      date: `${+ymd.slice(4, 6)}/${+ymd.slice(6, 8)}`,
+      heads: (buzz[ymd] || []).slice(0, 6),
+    }))
+    .filter((x) => x.heads.length);
+
   return {
     days: daysBack,
+    dates: allDays,
+    selected: onlyDate ?? null,
     scored: scored.length,
     upRateOpen: opens.length ? (opens.filter((x) => x > 0).length / opens.length) * 100 : null,
     avgOpen: mean(opens),
     avgChange: mean(changes),
     byType,
+    byHot,
+    hotThemes,
     events,
   };
 }

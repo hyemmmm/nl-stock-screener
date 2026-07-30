@@ -12,17 +12,31 @@ interface DiscEvent {
   title: string;
   changePct: number | null;
   openBuyPct: number | null;
+  hot: boolean;
+  hotNote: string;
 }
 interface DiscBacktest {
   days: number;
+  dates: string[];
+  selected: string | null;
   scored: number;
   upRateOpen: number | null;
   avgOpen: number | null;
   avgChange: number | null;
   byType: { type: string; n: number; upRate: number; avgOpen: number }[];
+  byHot: { label: string; n: number; upRate: number; avgOpen: number }[];
+  hotThemes: { date: string; heads: string[] }[];
   events: DiscEvent[];
   error?: string;
 }
+
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+const dLabel = (ymd: string) => {
+  const y = +ymd.slice(0, 4),
+    m = +ymd.slice(4, 6),
+    d = +ymd.slice(6, 8);
+  return `${m}/${d}(${WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]})`;
+};
 
 const pct = (x: number | null) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`);
 const cls = (x: number | null) => (x == null ? "text-zinc-500" : x >= 0 ? "text-up" : "text-down");
@@ -32,12 +46,14 @@ export default function DiscBacktestPage() {
   const [b, setB] = useState<DiscBacktest | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sel, setSel] = useState<string>("all");
 
-  async function load() {
+  async function load(date?: string) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/backtest", { cache: "no-store" });
+      const qs = date && date !== "all" ? `?date=${date}` : "";
+      const res = await fetch(`/api/backtest${qs}`, { cache: "no-store" });
       const j = await res.json();
       if (j.error) setError(j.error);
       else setB(j as DiscBacktest);
@@ -57,7 +73,14 @@ export default function DiscBacktestPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">공시 백테스트</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            최근 {b?.days ?? 6}일 <span className="text-up">🔺호재 공시</span> → 다음 거래일{" "}
+            {b?.selected ? (
+              <>
+                <span className="text-indigo-400">{dLabel(b.selected)} 공시</span>만
+              </>
+            ) : (
+              <>최근 {b?.days ?? 6}일</>
+            )}{" "}
+            <span className="text-up">🔺호재 공시</span> → 다음 거래일{" "}
             <span className="text-indigo-400">시가매수→종가</span>로 채점.
           </p>
         </div>
@@ -65,8 +88,24 @@ export default function DiscBacktestPage() {
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 내일 후보
           </Link>
+          <select
+            value={sel}
+            onChange={(e) => {
+              setSel(e.target.value);
+              load(e.target.value);
+            }}
+            disabled={loading}
+            className="rounded-lg border border-ink-600 bg-ink-800 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+          >
+            <option value="all">최근 6일 전체</option>
+            {(b?.dates ?? []).map((d) => (
+              <option key={d} value={d}>
+                {dLabel(d)}
+              </option>
+            ))}
+          </select>
           <button
-            onClick={load}
+            onClick={() => load(sel)}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
@@ -92,6 +131,42 @@ export default function DiscBacktestPage() {
             <Stat label="평균 · 전일대비" value={pct(b.avgChange)} valueClass={cls(b.avgChange)} />
             <Stat label="채점 건수" value={`${b.scored}건`} />
           </div>
+
+          {b.byHot?.length > 0 && (
+            <section className="mb-5">
+              <h2 className="mb-1 text-sm font-semibold text-zinc-300">
+                시황(그날 부각) 일치 여부별
+              </h2>
+              <p className="mb-2 text-xs text-zinc-600">
+                공시일에 그 종목이 특징주·테마 뉴스로 부각됐는지로 나눔 — 재료 + 시황이 같이 맞을 때 더
+                먹히는지 검증
+              </p>
+              <div className="overflow-x-auto rounded-2xl border border-ink-600 bg-ink-800">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-zinc-500">
+                    <tr className="border-b border-ink-600">
+                      <th className="px-4 py-2 text-left font-medium">구분</th>
+                      <th className="px-4 py-2 text-right font-medium">건수</th>
+                      <th className="px-4 py-2 text-right font-medium">적중률</th>
+                      <th className="px-4 py-2 text-right font-medium">평균</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.byHot.map((g) => (
+                      <tr key={g.label} className="border-b border-ink-700/50 last:border-0">
+                        <td className="px-4 py-2 text-zinc-200">{g.label}</td>
+                        <td className="px-4 py-2 text-right text-zinc-400">{g.n}</td>
+                        <td className="px-4 py-2 text-right text-zinc-400">{g.upRate.toFixed(0)}%</td>
+                        <td className={`px-4 py-2 text-right font-medium ${cls(g.avgOpen)}`}>
+                          {pct(g.avgOpen)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {b.byType.length > 0 && (
             <section className="mb-5">
@@ -147,6 +222,14 @@ export default function DiscBacktestPage() {
                         <span className="ml-1.5 rounded bg-zinc-500/15 px-1 py-0.5 text-[10px] text-zinc-400">
                           {e.type}
                         </span>
+                        {e.hot && (
+                          <span
+                            title={e.hotNote}
+                            className="ml-1.5 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300"
+                          >
+                            🔥 그날 부각
+                          </span>
+                        )}
                       </td>
                       <td className={`whitespace-nowrap px-2 py-2 text-right ${cls(e.changePct)}`}>{pct(e.changePct)}</td>
                       <td className={`whitespace-nowrap px-2 py-2 text-right font-medium ${cls(e.openBuyPct)}`}>
