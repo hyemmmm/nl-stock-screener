@@ -1,345 +1,275 @@
 "use client";
 
-import { useRef, useState } from "react";
-import ResultCard from "@/components/ResultCard";
-import ChartPanel from "@/components/ChartPanel";
-import {
-  RECENT_VOL_DAYS_DEFAULT,
-  RECENT_VOL_DAYS_MAX,
-  RECENT_VOL_DAYS_MIN,
-  SIGNAL_LOOKBACK_DAYS,
-  approxMonths,
-} from "@/lib/config";
-import type { EnrichedStock, ScreenResponse } from "@/lib/types";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 
-const EXAMPLES = [
-  "전일 거래량이 전 거래일 대비 500% 이상 폭증한 뒤 다음날 25% 이하로 급감한 음봉 + 5일선 이격 작고, 최근 두달 안에 거래량 1000만 이상 나온 적 있는 종목",
-  "전일 거래량 폭증 후 급감한 음봉 + 5일선 근접",
-  "저평가 고배당 코스피 종목",
-  "코스닥 반도체 급등주",
-  "배당수익률 5% 이상 은행주",
-];
+interface Repeat {
+  episodes: number;
+  scored: number;
+  upRate: number | null;
+  avg: number | null;
+  lastYmd: string | null;
+}
+interface Candidate {
+  source: "뉴스" | "공시";
+  title: string;
+  type: string;
+  stage: string;
+  why: string;
+  stocks: {
+    name: string;
+    code: string;
+    bigVol?: boolean;
+    via?: "AI" | "테마";
+    chg?: number | null;
+    reason?: string;
+  }[];
+  repeat: Repeat;
+  freshness: string;
+  verdict: string;
+  themeName: string | null;
+  themeChg: number | null;
+  score: number;
+}
+interface TomorrowResult {
+  forDate: string;
+  since: string;
+  kospiPct: number | null;
+  topThemes: { name: string; chg: number }[];
+  candidates: Candidate[];
+  rejected: Candidate[];
+  error?: string;
+}
 
-export default function Home() {
-  const [query, setQuery] = useState("");
-  const [data, setData] = useState<ScreenResponse | null>(null);
+const naver = (code: string) => `https://finance.naver.com/item/main.naver?code=${code}`;
+const TYPE_COLOR: Record<string, string> = {
+  "없다가 생김": "bg-emerald-500/15 text-emerald-300",
+  "있다가 사라짐": "bg-rose-500/15 text-rose-300",
+  "발생·확산": "bg-amber-500/15 text-amber-300",
+  "정책·규제": "bg-indigo-500/15 text-indigo-300",
+  "계약·수주": "bg-sky-500/15 text-sky-300",
+};
+
+export default function TomorrowPage() {
+  const [data, setData] = useState<TomorrowResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<EnrichedStock | null>(null);
-  const [recentDays, setRecentDays] = useState(RECENT_VOL_DAYS_DEFAULT);
-  const [lastQuery, setLastQuery] = useState("");
-  const taRef = useRef<HTMLTextAreaElement>(null);
 
-  function autoGrow(el: HTMLTextAreaElement) {
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }
-
-  function setQueryAndGrow(value: string) {
-    setQuery(value);
-    requestAnimationFrame(() => {
-      const el = taRef.current;
-      if (el) autoGrow(el);
-    });
-  }
-
-  async function run(q: string, days: number = recentDays) {
-    const text = q.trim();
-    if (!text) return;
-    setLastQuery(text);
+  async function load() {
     setLoading(true);
     setError(null);
-    setSelected(null);
     try {
-      const res = await fetch("/api/screen", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: text, recentDays: days }),
-      });
-      const json = (await res.json()) as ScreenResponse & { error?: string };
-      if (json.error) {
-        setError(json.error);
-        setData(null);
-      } else {
-        setData(json);
-        if (json.results[0]) setSelected(json.results[0].stock);
-      }
+      const res = await fetch("/api/tomorrow", { cache: "no-store" });
+      const json = (await res.json()) as TomorrowResult;
+      if (json.error) setError(json.error);
+      else setData(json);
     } catch {
-      setError("검색 중 오류가 발생했습니다");
+      setError("불러오기 실패");
     } finally {
       setLoading(false);
     }
   }
-
-  // "최근 N거래일" 조정 → 마지막 쿼리를 새 윈도우로 재검색
-  function changeRecentDays(days: number) {
-    setRecentDays(days);
-    if (lastQuery) run(lastQuery, days);
-  }
+  useEffect(() => {
+    load();
+  }, []);
 
   return (
-    <main className="mx-auto max-w-6xl px-5 py-10">
-      <header className="mb-8 flex items-start justify-between">
+    <main className="mx-auto max-w-3xl px-5 py-10">
+      <header className="mb-6 flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-            자연어 종목 스크리너
+            📌 내일 시가 후보
           </h1>
           <p className="mt-2 text-sm text-zinc-400">
-            원하는 조건을 한국어로 자유롭게 적어주세요. 여러 줄로 길게 써도 됩니다.
+            {data ? (
+              <>
+                <span className="text-indigo-400">{data.since} 이후</span> 뉴스·공시 재료 →
+                반복성·신선도로 걸러 다음 거래일 후보. <b className="text-zinc-300">결정은 직접.</b>
+              </>
+            ) : (
+              <>장마감 후 재료를 반복성·신선도·시황으로 걸러 다음 거래일 후보를 대령.</>
+            )}
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <a
-            href="/tomorrow"
-            className="rounded-lg border border-indigo-500/50 bg-indigo-500/10 px-3 py-1.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500 hover:text-white"
+        <div className="flex items-center gap-3">
+          <Link href="/score" className="text-xs text-indigo-400 hover:text-indigo-300">
+            성적표 →
+          </Link>
+          <Link href="/backtest" className="text-xs text-zinc-500 hover:text-zinc-300">
+            공시 백테스트 →
+          </Link>
+          <Link href="/movers" className="text-xs text-zinc-500 hover:text-zinc-300">
+            특징주 →
+          </Link>
+          <Link href="/catalyst" className="text-xs text-zinc-500 hover:text-zinc-300">
+            재료분석 →
+          </Link>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
-            📌 내일 후보
-          </a>
-          <a
-            href="/radar"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            📡 레이더
-          </a>
-          <a
-            href="/disclosures"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            📃 공시
-          </a>
-          <a
-            href="/scanner"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            🔔 스캐너
-          </a>
-          <a
-            href="/catalyst"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            📈 재료분석
-          </a>
-          <a
-            href="/movers"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            🔥 특징주
-          </a>
-          <a
-            href="/today"
-            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
-          >
-            📰 오늘의 이슈 →
-          </a>
+            {loading ? "분석 중…" : "새로고침"}
+          </button>
         </div>
       </header>
 
-      {/* prompt-style composer */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          run(query);
-        }}
-      >
-        <div className="rounded-2xl border border-ink-600 bg-ink-800 p-3 transition-colors focus-within:border-indigo-500">
-          <textarea
-            ref={taRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              autoGrow(e.target);
-            }}
-            onKeyDown={(e) => {
-              // Enter 전송, Shift+Enter 줄바꿈
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                run(query);
-              }
-            }}
-            rows={2}
-            placeholder={
-              "예) 전일 거래량이 전 거래일 대비 500% 이상 폭증한 뒤\n다음날 거래량이 25% 이하로 급감한 음봉 + 5일선과 이격이 작은 종목"
-            }
-            className="block max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed text-white placeholder:text-zinc-600 outline-none"
-          />
-          <div className="mt-2 flex items-center justify-between px-1">
-            <span className="text-[11px] text-zinc-600">
-              <kbd className="rounded bg-ink-600 px-1 text-zinc-400">Enter</kbd> 전송 ·{" "}
-              <kbd className="rounded bg-ink-600 px-1 text-zinc-400">Shift+Enter</kbd> 줄바꿈
-            </span>
-            <button
-              type="submit"
-              disabled={loading || !query.trim()}
-              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-40"
-            >
-              {loading ? "검색 중…" : "검색"}
-            </button>
-          </div>
-        </div>
-      </form>
-
-      {/* example chips */}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {EXAMPLES.map((ex) => (
-          <button
-            key={ex}
-            onClick={() => {
-              setQueryAndGrow(ex);
-              run(ex);
-            }}
-            className="rounded-full border border-ink-600 bg-ink-800 px-3 py-1 text-xs text-zinc-400 transition-colors hover:border-ink-500 hover:text-zinc-200"
-          >
-            {ex}
-          </button>
-        ))}
-      </div>
-
-      {/* "최근" window control — makes the vague word quantitative & adjustable */}
-      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-ink-700 bg-ink-800/40 px-4 py-2.5 text-xs">
-        <span className="text-zinc-400">
-          &ldquo;최근&rdquo; 거래량 기준{" "}
-          <span className="text-zinc-600">(recentMaxVol 윈도우)</span>
-        </span>
-        <input
-          type="range"
-          min={RECENT_VOL_DAYS_MIN}
-          max={RECENT_VOL_DAYS_MAX}
-          step={5}
-          value={recentDays}
-          onChange={(e) => setRecentDays(Number(e.target.value))}
-          onMouseUp={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
-          onKeyUp={(e) => changeRecentDays(Number((e.target as HTMLInputElement).value))}
-          className="h-1 w-40 cursor-pointer accent-indigo-500"
-        />
-        <span className="font-medium text-white tabular-nums">
-          최근 {recentDays}거래일
-        </span>
-        <span className="text-zinc-500">{approxMonths(recentDays)}</span>
-        {recentDays !== RECENT_VOL_DAYS_DEFAULT && (
-          <button
-            onClick={() => changeRecentDays(RECENT_VOL_DAYS_DEFAULT)}
-            className="text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
-          >
-            기본값({RECENT_VOL_DAYS_DEFAULT})
-          </button>
-        )}
-      </div>
-
-      {/* interpreted filter banner */}
-      {data && (
-        <div className="mt-6 rounded-xl border border-ink-600 bg-ink-800/60 p-4">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span
-              className={`rounded-full px-2 py-0.5 font-medium ${
-                data.source === "rules"
-                  ? "bg-amber-500/15 text-amber-300"
-                  : "bg-emerald-500/15 text-emerald-300"
-              }`}
-            >
-              {data.source === "claude"
-                ? "Claude 해석"
-                : data.source === "groq"
-                  ? "Llama(Groq) 해석"
-                  : "규칙 기반 해석"}
-            </span>
-            <span className="text-zinc-300">{data.filter.rationale}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {data.filter.market && data.filter.market !== "ALL" && (
-              <Chip>{data.filter.market}</Chip>
-            )}
-            {data.filter.sector && <Chip>{data.filter.sector}</Chip>}
-            {data.filter.bearish === true && <Chip>음봉</Chip>}
-            {data.filter.bearish === false && <Chip>양봉</Chip>}
-            {data.filter.conditions.map((c, i) => (
-              <Chip key={i}>{c.label}</Chip>
-            ))}
-          </div>
-
-          {/* quantitative basis: spell out what the vague words mean */}
-          {(data.filter.conditions.some((c) => c.field === "recentMaxVol") ||
-            data.filter.conditions.some((c) =>
-              ["volSurgeRatio", "volDropRatio", "gap5MAAbs"].includes(c.field),
-            ) ||
-            data.filter.bearish != null) && (
-            <div className="mt-2 border-t border-ink-700 pt-2 text-[11px] text-zinc-500">
-              ⓘ 기준:{" "}
-              {data.filter.conditions.some((c) => c.field === "recentMaxVol") && (
-                <span>
-                  &lsquo;최근&rsquo; = <b className="text-zinc-300">최근 {data.recentDays}거래일</b>(
-                  {approxMonths(data.recentDays)}) 최대 거래량
-                </span>
-              )}
-              {(data.filter.conditions.some((c) =>
-                ["volSurgeRatio", "volDropRatio", "gap5MAAbs"].includes(c.field),
-              ) ||
-                data.filter.bearish != null) && (
-                <span>
-                  {data.filter.conditions.some((c) => c.field === "recentMaxVol") ? " · " : ""}
-                  &lsquo;신호일&rsquo; = 최근 {SIGNAL_LOOKBACK_DAYS}거래일 스캔 중 가장 강한 시점
-                </span>
-              )}
-            </div>
-          )}
+      {/* 시황 게이트 */}
+      {data?.kospiPct != null && (
+        <div
+          className={`mb-5 rounded-xl border p-3 text-sm ${
+            data.kospiPct <= -2
+              ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+              : data.kospiPct < 0
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+          }`}
+        >
+          시황: 오늘 코스피 {data.kospiPct >= 0 ? "+" : ""}
+          {data.kospiPct.toFixed(2)}%
+          {data.kospiPct <= -2 && " — 급락장 익일. 재료보다 시장이 셀 수 있음, 갭·변동성 주의"}
+          {data.kospiPct > -2 && data.kospiPct < 0 && " — 약세. 재료 반응 약할 수 있음"}
+          {data.kospiPct >= 0 && " — 우호적"}
         </div>
       )}
 
+      {/* 오늘 부각 테마 (시황) */}
+      {data && data.topThemes.length > 0 && (
+        <div className="mb-5 rounded-xl border border-ink-600 bg-ink-800 px-4 py-2.5 text-sm">
+          <span className="mr-2 text-xs text-zinc-500">오늘 부각 테마</span>
+          {data.topThemes.map((t, i) => (
+            <span key={t.name} className="mr-3 whitespace-nowrap">
+              <span className="text-zinc-300">{t.name}</span>{" "}
+              <span className={t.chg >= 0 ? "text-up" : "text-down"}>
+                {t.chg >= 0 ? "+" : ""}
+                {t.chg.toFixed(1)}%
+              </span>
+              {i < data.topThemes.length - 1 && <span className="ml-3 text-zinc-700">·</span>}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {loading && !data && (
+        <div className="rounded-2xl border border-ink-600 bg-ink-800 p-10 text-center text-sm text-zinc-500">
+          뉴스·공시 재료 모으고 과거 반응 채점 중… (약 30~60초)
+        </div>
+      )}
       {error && (
-        <p className="mt-6 rounded-xl border border-up/30 bg-up/10 p-4 text-sm text-up">
+        <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
           {error}
         </p>
       )}
 
-      {/* results + chart */}
-      {data && (
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.1fr]">
-          <div>
-            <div className="mb-3 text-sm text-zinc-400">
-              <span className="font-semibold text-white">{data.count}</span>개 종목
+      {data && data.candidates.length === 0 && !loading && (
+        <div className="rounded-2xl border border-ink-600 bg-ink-800 p-10 text-center text-sm text-zinc-500">
+          오늘은 통과한 재료가 없어요. (장 마감 후 저녁에 다시 열어보세요)
+        </div>
+      )}
+
+      {/* 후보 */}
+      <div className="space-y-4">
+        {data?.candidates.map((c, i) => (
+          <div key={i} className="rounded-2xl border border-ink-600 bg-ink-800 p-5">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-indigo-400">#{i + 1}</span>
+              <span className="rounded bg-zinc-500/15 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                {c.source}
+              </span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                  TYPE_COLOR[c.type] ?? "bg-zinc-500/15 text-zinc-400"
+                }`}
+              >
+                {c.type}
+              </span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                  c.stage === "확정" ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"
+                }`}
+              >
+                {c.stage}
+              </span>
+              <span className="text-[11px] text-zinc-500">{c.freshness}</span>
+              {c.themeChg != null && (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    c.themeChg >= 2
+                      ? "bg-up/15 text-up"
+                      : c.themeChg >= 0
+                        ? "bg-zinc-500/15 text-zinc-300"
+                        : "bg-down/15 text-down"
+                  }`}
+                >
+                  테마 {c.themeName} {c.themeChg >= 0 ? "+" : ""}
+                  {c.themeChg.toFixed(1)}%
+                </span>
+              )}
             </div>
-            {data.count === 0 ? (
-              <p className="rounded-xl border border-ink-600 bg-ink-800 p-6 text-sm text-zinc-500">
-                조건에 맞는 종목이 없습니다. 조건을 완화해 보세요.
-              </p>
-            ) : (
-              <div className="flex max-h-[640px] flex-col gap-3 overflow-y-auto scroll-thin pr-1">
-                {data.results.map((r) => (
-                  <ResultCard
-                    key={r.stock.code}
-                    result={r}
-                    selected={selected?.code === r.stock.code}
-                    onSelect={() => setSelected(r.stock)}
-                  />
+            <h2 className="text-base font-semibold leading-snug text-white">{c.title}</h2>
+            <p className="mt-1 text-sm text-zinc-400">{c.why}</p>
+            <p className="mt-2 rounded-lg bg-ink-900/50 px-3 py-2 text-sm text-zinc-300">
+              📊 {c.verdict}
+              {c.repeat.scored > 0 && (
+                <span className="ml-1 text-xs text-zinc-500">(표본 {c.repeat.scored}건)</span>
+              )}
+            </p>
+            <div className="mt-3">
+              <div className="mb-1.5 text-[11px] text-zinc-500">
+                관련주 {c.stocks.length}
+                <span className="ml-1 text-zinc-600">(진한=AI 지목 · 흐린=테마 구성종목)</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {c.stocks.map((s) => (
+                  <a
+                    key={s.code}
+                    href={naver(s.code)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={s.reason || undefined}
+                    className={`rounded-md border px-2 py-0.5 text-[12px] transition-colors hover:border-indigo-500 hover:text-white ${
+                      s.via === "테마" ? "border-ink-700 text-zinc-500" : "border-ink-500 text-zinc-200"
+                    }`}
+                  >
+                    {s.name}
+                    {s.chg != null && (
+                      <span className={`ml-1 ${s.chg >= 0 ? "text-up" : "text-down"}`}>
+                        {s.chg >= 0 ? "+" : ""}
+                        {s.chg.toFixed(1)}%
+                      </span>
+                    )}
+                    {s.bigVol && (
+                      <span title="최근 거래량 1,000만주+ 이력" className="ml-1 text-amber-400">
+                        ⚡
+                      </span>
+                    )}
+                  </a>
                 ))}
               </div>
-            )}
+            </div>
           </div>
+        ))}
+      </div>
 
-          <div className="lg:sticky lg:top-6 lg:self-start">
-            <ChartPanel stock={selected} />
+      {/* 거른 것 */}
+      {data && data.rejected.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-2 text-sm font-semibold text-zinc-400">❌ 거른 재료</h2>
+          <div className="space-y-2">
+            {data.rejected.map((c, i) => (
+              <div key={i} className="rounded-xl border border-ink-700 bg-ink-800/60 p-3 text-sm">
+                <span className="text-zinc-400">{c.title}</span>
+                <span className="ml-2 text-xs text-zinc-600">— {c.verdict}</span>
+              </div>
+            ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {!data && !error && (
-        <div className="mt-16 text-center text-sm text-zinc-600">
-          위 예시를 눌러보거나 직접 조건을 입력해 검색을 시작하세요.
-        </div>
-      )}
-
-      <footer className="mt-16 border-t border-ink-700 pt-6 text-center text-xs text-zinc-600">
-        Next.js · Claude API · KIS Open API · TradingView Lightweight Charts ·
-        포트폴리오 데모 (투자 자문 아님)
+      <footer className="mt-10 text-center text-xs text-zinc-600">
+        후보 = 판단 재료 제공이지 매수 추천 아님 · ⚡ = 최근 거래량 1,000만주+ 이력(참고용, 필터 아님) ·
+        반복성 표본 작음 · 관련주 AI 추정 · 결정과 책임은 본인
       </footer>
     </main>
-  );
-}
-
-function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded-md bg-ink-600 px-2 py-0.5 text-[11px] text-zinc-300">
-      {children}
-    </span>
   );
 }

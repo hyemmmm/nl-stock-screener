@@ -5,7 +5,11 @@
 // ──────────────────────────────────────────────────────────────────────────
 import { promises as fs } from "fs";
 import path from "path";
-import type { RadarResult } from "./radar";
+// 기록 입력 (내일 후보 파이프라인이 넘겨주는 최소 형태)
+export interface PickInput {
+  since: string;
+  catalysts: { title: string; type: string; stocks: { name: string; code: string }[] }[];
+}
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const PICKS_FILE = path.join(DATA_DIR, "radar-picks.jsonl");
@@ -45,7 +49,7 @@ async function readPicks(): Promise<PickRecord[]> {
 }
 
 // 하루 1건 기록. 새로 기록하면 true.
-export async function recordPicks(res: RadarResult): Promise<boolean> {
+export async function recordPicks(res: PickInput): Promise<boolean> {
   const date = kstYmd(Date.now());
   const picks = await readPicks();
   if (picks.some((p) => p.date === date)) return false;

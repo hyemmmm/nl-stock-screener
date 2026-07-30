@@ -132,6 +132,9 @@ export default function CatalystPage() {
             등락률·거래량·시황·재료(뉴스)를 유형별로 정리.
           </p>
         </div>
+        <Link href="/" className="mr-3 shrink-0 text-xs text-zinc-500 hover:text-zinc-300">
+          ← 내일 후보
+        </Link>
         <Link href="/movers" className="shrink-0 text-xs text-zinc-500 hover:text-zinc-300">
           특징주 →
         </Link>

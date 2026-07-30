@@ -73,6 +73,9 @@ export default function MoversPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
+            ← 내일 후보
+          </Link>
           <Link href="/catalyst" className="text-xs text-zinc-500 hover:text-zinc-300">
             재료분석 →
           </Link>

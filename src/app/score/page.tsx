@@ -39,7 +39,7 @@ export default function RadarScorePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/radar/score", { cache: "no-store" });
+      const res = await fetch("/api/score", { cache: "no-store" });
       const j = await res.json();
       if (j.error) setError(j.error);
       else setB(j as RadarBoard);
@@ -64,8 +64,8 @@ export default function RadarScorePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/radar" className="text-xs text-zinc-500 hover:text-zinc-300">
-            ← 레이더
+          <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
+            ← 내일 후보
           </Link>
           <button
             onClick={load}
@@ -90,7 +90,7 @@ export default function RadarScorePage() {
 
       {b && b.totalDays === 0 && (
         <div className="rounded-2xl border border-ink-600 bg-ink-800 p-10 text-center text-sm text-zinc-500">
-          아직 저장된 픽이 없어요. <Link href="/radar" className="text-indigo-400">레이더</Link>를 매일 열면
+          아직 저장된 픽이 없어요. <Link href="/" className="text-indigo-400">내일 후보</Link>를 매일 열면
           그날 재료가 저장되고, 다음날부터 여기서 채점 결과가 쌓여요.
         </div>
       )}

@@ -37,7 +37,7 @@ export default function DiscBacktestPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/disclosures/backtest", { cache: "no-store" });
+      const res = await fetch("/api/backtest", { cache: "no-store" });
       const j = await res.json();
       if (j.error) setError(j.error);
       else setB(j as DiscBacktest);
@@ -62,8 +62,8 @@ export default function DiscBacktestPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/disclosures" className="text-xs text-zinc-500 hover:text-zinc-300">
-            ← 공시
+          <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
+            ← 내일 후보
           </Link>
           <button
             onClick={load}
