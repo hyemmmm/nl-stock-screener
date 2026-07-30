@@ -28,7 +28,10 @@ export async function searchNews(
 ): Promise<NewsItem[]> {
   const id = process.env.NAVER_CLIENT_ID;
   const secret = process.env.NAVER_CLIENT_SECRET;
-  if (!id || !secret) return [];
+  if (!id || !secret) {
+    console.error("[searchNews] NAVER keys missing (id:", !!id, "secret:", !!secret, ")");
+    return [];
+  }
   try {
     const url =
       `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}` +
@@ -37,7 +40,12 @@ export async function searchNews(
       headers: { "X-Naver-Client-Id": id, "X-Naver-Client-Secret": secret },
       cache: "no-store",
     });
-    const j = (await r.json()) as { items?: { title: string; originallink?: string; link?: string; pubDate?: string }[] };
+    const j = (await r.json()) as {
+      items?: { title: string; originallink?: string; link?: string; pubDate?: string }[];
+      errorCode?: string;
+      errorMessage?: string;
+    };
+    if (!j.items) console.error("[searchNews] no items:", r.status, j.errorCode, j.errorMessage);
     return (j.items || [])
       .map((it) => ({
         title: strip(it.title || ""),
@@ -45,7 +53,8 @@ export async function searchNews(
         ts: it.pubDate ? Date.parse(it.pubDate) : NaN,
       }))
       .filter((x) => x.title);
-  } catch {
+  } catch (err) {
+    console.error("[searchNews]", query, err instanceof Error ? err.message : err);
     return [];
   }
 }

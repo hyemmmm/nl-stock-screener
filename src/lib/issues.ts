@@ -49,13 +49,13 @@ function lastMarketCloseMs(): number {
   return cutoff;
 }
 
-interface Theme {
+export interface Theme {
   no: string;
   name: string;
   chg: number;
 }
 
-async function fetchThemes(): Promise<Theme[]> {
+export async function fetchThemes(): Promise<Theme[]> {
   const themes: Theme[] = [];
   for (let p = 1; p <= 7; p++) {
     try {

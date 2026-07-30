@@ -38,6 +38,7 @@ function classify(nm: string): { t: string; dir: Dir } | null {
 export interface Disclosure {
   code: string;
   name: string;
+  corp: string; // DART corp_code (반복성 조회용)
   title: string;
   type: string;
   dir: Dir;
@@ -50,6 +51,7 @@ export interface DartResult {
 }
 
 interface DartRow {
+  corp_code: string;
   corp_name: string;
   stock_code: string;
   report_nm: string;
@@ -95,6 +97,7 @@ async function fetchDisclosures(ymd: string): Promise<{ count: number; items: Di
     items.push({
       code: x.stock_code,
       name: x.corp_name,
+      corp: x.corp_code || "",
       title: nm,
       type: cat.t,
       dir: cat.dir,

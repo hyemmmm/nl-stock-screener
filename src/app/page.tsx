@@ -90,10 +90,16 @@ export default function Home() {
         </div>
         <div className="flex shrink-0 gap-2">
           <a
-            href="/radar"
+            href="/tomorrow"
             className="rounded-lg border border-indigo-500/50 bg-indigo-500/10 px-3 py-1.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500 hover:text-white"
           >
-            📡 재료레이더
+            📌 내일 후보
+          </a>
+          <a
+            href="/radar"
+            className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-indigo-500 hover:text-white"
+          >
+            📡 레이더
           </a>
           <a
             href="/disclosures"
