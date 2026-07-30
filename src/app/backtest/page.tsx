@@ -87,7 +87,7 @@ export default function DiscBacktestPage() {
               <>최근 {b?.days ?? 6}일</>
             )}{" "}
             <span className="text-up">🔺호재 공시</span> → 다음 거래일{" "}
-            <span className="text-indigo-400">내 전략</span>으로 채점 (시가 매수 → +3% 절반 익절 /
+            <span className="text-indigo-400">내 전략</span>으로 채점 (시가 매수 → +3% 전량 익절 /
             -5% 손절 / 나머지 종가 청산).
           </p>
         </div>

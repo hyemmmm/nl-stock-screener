@@ -156,7 +156,7 @@ export interface DiscEvent {
   code: string;
   type: string;
   title: string;
-  // 내 전략(시가매수 → +3% 절반익절 / -5% 손절 / 나머지 종가청산) 결과
+  // 내 전략(시가매수 → +3% 전량익절 / -5% 손절 / 아니면 종가청산) 결과
   stratRet: number | null; // 전략 수익률
   maxUp: number | null; // 당일 최대 상승(위꼬리 포함)
   maxDown: number | null; // 당일 최대 하락

@@ -98,7 +98,7 @@ export interface ScoredStock {
   name: string;
   code: string;
   type: string;
-  stratRet: number | null; // 내 전략 수익 (+3% 절반익절 / -5% 손절 / 종가청산)
+  stratRet: number | null; // 내 전략 수익 (+3% 전량익절 / -5% 손절 / 종가청산)
   maxUp: number | null;
   maxDown: number | null;
   closeRet: number | null;

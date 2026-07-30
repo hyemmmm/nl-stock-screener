@@ -66,7 +66,7 @@ export default function RadarScorePage() {
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">레이더 성적표</h1>
           <p className="mt-2 text-sm text-zinc-400">
             매일 감지한 재료·관련주가 다음날 실제로 올랐는지 누적 채점 →{" "}
-            <span className="text-zinc-600">내 전략 기준 (시가매수 → +3% 절반익절 / -5% 손절 / 종가청산)</span>
+            <span className="text-zinc-600">내 전략 기준 (시가매수 → +3% 전량익절 / -5% 손절 / 종가청산)</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -191,7 +191,7 @@ export default function RadarScorePage() {
       )}
 
       <footer className="mt-10 text-center text-xs text-zinc-600">
-        전략 = 다음 거래일 시가 매수 → +3% 절반 익절 / -5% 손절 / 나머지 종가 청산 · 관련주 AI 추정 · 데이터는 매일 축적 · 참고용
+        전략 = 다음 거래일 시가 매수 → +3% 전량 익절 / -5% 손절 / 아니면 종가 청산 · 관련주 AI 추정 · 데이터는 매일 축적 · 참고용
       </footer>
     </main>
   );
