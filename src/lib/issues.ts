@@ -75,7 +75,15 @@ export async function fetchThemes(): Promise<Theme[]> {
   return themes;
 }
 
-export async function fetchThemeStocks(no: string): Promise<{ code: string; name: string }[]> {
+export interface ThemeStock {
+  code: string;
+  name: string;
+  chg: number | null; // 오늘 등락률 (주도주 판별용)
+  reason: string; // 네이버 '테마 편입 사유'
+}
+
+// 테마 구성종목. 네이버가 등락률 내림차순으로 주므로 앞쪽이 오늘 주도주.
+export async function fetchThemeStocks(no: string): Promise<ThemeStock[]> {
   const buf = await (
     await fetch(`https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=${no}`, {
       headers: { referer: "https://finance.naver.com/" },
@@ -83,14 +91,27 @@ export async function fetchThemeStocks(no: string): Promise<{ code: string; name
     })
   ).arrayBuffer();
   const txt = dec(buf);
-  const out: { code: string; name: string }[] = [];
+  const anchors = [...txt.matchAll(/\/item\/main\.naver\?code=(\d{6})">([^<]+)<\/a>/g)];
+  const out: ThemeStock[] = [];
   const seen = new Set<string>();
-  const re = /\/item\/main\.naver\?code=(\d{6})">([^<]+)<\/a>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(txt))) {
-    if (seen.has(m[1])) continue;
-    seen.add(m[1]);
-    out.push({ code: m[1], name: m[2].trim() });
+  for (let k = 0; k < anchors.length; k++) {
+    const m = anchors[k];
+    const code = m[1];
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const start = m.index ?? 0;
+    const end = k + 1 < anchors.length ? (anchors[k + 1].index ?? txt.length) : start + 2500;
+    const chunk = txt.slice(start, end);
+    const chgM = chunk.match(/([+\-][\d.]+)%/);
+    const reasonM = chunk.match(/class="info_txt">([\s\S]*?)<\/p>/);
+    out.push({
+      code,
+      name: m[2].trim(),
+      chg: chgM ? parseFloat(chgM[1]) : null,
+      reason: reasonM
+        ? reasonM[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 160)
+        : "",
+    });
   }
   return out;
 }

@@ -16,7 +16,14 @@ interface Candidate {
   type: string;
   stage: string;
   why: string;
-  stocks: { name: string; code: string; bigVol?: boolean; via?: "AI" | "테마" }[];
+  stocks: {
+    name: string;
+    code: string;
+    bigVol?: boolean;
+    via?: "AI" | "테마";
+    chg?: number | null;
+    reason?: string;
+  }[];
   repeat: Repeat;
   freshness: string;
   verdict: string;
@@ -210,11 +217,18 @@ export default function TomorrowPage() {
                     href={naver(s.code)}
                     target="_blank"
                     rel="noreferrer"
+                    title={s.reason || undefined}
                     className={`rounded-md border px-2 py-0.5 text-[12px] transition-colors hover:border-indigo-500 hover:text-white ${
                       s.via === "테마" ? "border-ink-700 text-zinc-500" : "border-ink-500 text-zinc-200"
                     }`}
                   >
                     {s.name}
+                    {s.chg != null && (
+                      <span className={`ml-1 ${s.chg >= 0 ? "text-up" : "text-down"}`}>
+                        {s.chg >= 0 ? "+" : ""}
+                        {s.chg.toFixed(1)}%
+                      </span>
+                    )}
                     {s.bigVol && (
                       <span title="최근 거래량 1,000만주+ 이력" className="ml-1 text-amber-400">
                         ⚡

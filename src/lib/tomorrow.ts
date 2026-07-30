@@ -6,9 +6,9 @@
 //   판단 재료를 대령할 뿐, 매수 결정은 사용자가.
 // ──────────────────────────────────────────────────────────────────────────
 import { searchNews } from "./news";
-import { searchStock } from "./catalyst";
+import { buildRelatedStocks, matchTheme, type RelStock } from "./stocks";
 import { todayDisclosures, type Disclosure } from "./dart";
-import { fetchThemes, fetchThemeStocks, type Theme } from "./issues";
+import { fetchThemes, type Theme } from "./issues";
 
 const H = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
 const p2 = (n: number) => String(n).padStart(2, "0");
@@ -116,35 +116,6 @@ JSON만: {"catalysts":[{"title":"","type":"없다가 생김|있다가 사라짐|
   }
 }
 
-// 회사명 → 종목코드. 사명변경·표기차이 대응으로 변형까지 시도.
-async function resolveStock(name: string): Promise<{ name: string; code: string } | null> {
-  const variants = [
-    name,
-    name.replace(/\s/g, ""),
-    name.replace(/(지주|홀딩스|그룹)$/, ""),
-    name.replace(/^주식회사\s*/, ""),
-    name.length > 3 ? name.slice(0, name.length - 1) : name, // "포스코건설"→"포스코건"류 부분일치 유도
-  ];
-  const seen = new Set<string>();
-  for (const v of variants) {
-    if (!v || v.length < 2 || seen.has(v)) continue;
-    seen.add(v);
-    const hits = await searchStock(v);
-    if (hits[0]) return { name: hits[0].name, code: hits[0].code };
-  }
-  return null;
-}
-
-// 재료 텍스트로 네이버 테마를 찾아 구성종목을 보강 (실제 상장 종목 다수 확보)
-function matchTheme(themes: Theme[], texts: string[]): Theme | null {
-  const toks = texts
-    .join(" ")
-    .split(/[\s·/(),]+/)
-    .map((x) => x.replace(/업$|주$|산업$/, ""))
-    .filter((x) => x.length >= 2)
-    .slice(0, 12);
-  return themes.find((t) => toks.some((tok) => t.name.includes(tok))) ?? null;
-}
 
 // ── 2) 뉴스 반복성: query로 과거 에피소드 찾고 관련주 반응 채점 ─────────────
 interface Repeat {
@@ -252,12 +223,10 @@ async function discRepeat(d: Disclosure, todayYmd: string): Promise<Repeat> {
 }
 
 // ── 결과 타입 ──────────────────────────────────────────────────────────────
-export interface CandStock {
-  name: string;
-  code: string;
+// RelStock(name·code·via·chg·reason) + 거래량 이력 표시
+export type CandStock = RelStock & {
   bigVol?: boolean; // 최근 거래량 1,000만주+ 이력 (표시만, 필터 아님)
-  via?: "AI" | "테마"; // AI가 직접 지목 vs 테마 구성종목 보강(정확도 낮음)
-}
+};
 export interface Candidate {
   source: "뉴스" | "공시";
   title: string; // 재료
@@ -337,25 +306,11 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   const newsCats = await detectNewsCatalysts(cutoff, since);
   const all: Candidate[] = [];
   for (const nc of newsCats) {
-    const stocks: CandStock[] = [];
-    const seenCode = new Set<string>();
-    for (const n of (nc.stocks || []).slice(0, 8)) {
-      const hit = await resolveStock(n);
-      if (hit && !seenCode.has(hit.code)) {
-        seenCode.add(hit.code);
-        stocks.push({ ...hit, via: "AI" });
-      }
-    }
-    // 테마 구성종목으로 보강 (관련주가 빈약할 때 실제 상장 종목 채우기)
-    const th = matchTheme(themes, [nc.title, nc.why, nc.query]);
-    if (th && stocks.length < 6) {
-      const ts = await fetchThemeStocks(th.no).catch(() => []);
-      for (const s of ts) {
-        if (stocks.length >= 8 || seenCode.has(s.code)) continue;
-        seenCode.add(s.code);
-        stocks.push({ name: s.name, code: s.code, via: "테마" });
-      }
-    }
+    const { stocks } = await buildRelatedStocks(nc.stocks || [], themes, [
+      nc.title,
+      nc.why,
+      nc.query,
+    ]);
     if (!stocks.length) continue;
     const repeat = await newsRepeat(nc.query, stocks, todayYmd);
     all.push(

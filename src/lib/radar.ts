@@ -6,6 +6,8 @@
 // ──────────────────────────────────────────────────────────────────────────
 import { searchNews } from "./news";
 import { searchStock } from "./catalyst";
+import { buildRelatedStocks } from "./stocks";
+import { fetchThemes, type Theme } from "./issues";
 
 // "없다가 생긴 것 / 있다가 사라진 것" 신호 검색어 (호출량 관리 위해 6개)
 const SIGNAL_QUERIES = ["규제 완화", "허용", "허가 획득", "대규모 수주", "관세", "확산"];
@@ -31,6 +33,9 @@ function lastCloseMs(): number {
 export interface RadarStock {
   name: string;
   code: string;
+  via?: "AI" | "테마";
+  chg?: number | null; // 오늘 등락률(테마 보강분 = 주도주 순)
+  reason?: string; // 테마 편입 사유
 }
 export interface Catalyst {
   title: string; // 재료(오늘 생긴 사건)
@@ -61,7 +66,7 @@ async function pickCatalysts(headlines: { title: string; link: string }[], since
 
 ★ 반드시 '변화'여야 한다: 규제가 새로 생기거나 없어짐 / 최초 허용·금지 / 신규 발생·확산 / 갑작스런 대형 계약·수주 / 관세 신설·철폐 등. ("없다가 생긴 것 / 있다가 사라진 것")
 ★ 이미 예정됐거나 다 알려진 이벤트(예정된 출시·정기 실적·기존 진행사항)는 제외.
-★ 각 재료에 관련 '상장사' 2~4개를 제시한다. 코로나→씨젠(진단)뿐 아니라 인테리어·홈트처럼 파급되는 종목까지 상상해서 넣어라. 실제 한국 상장사 이름으로.
+★ 각 재료에 관련 '상장사' 5~8개를 제시한다(가능한 많이). 코로나→씨젠(진단)뿐 아니라 인테리어·홈트처럼 파급되는 종목까지 상상해서 넣어라. 반드시 "현재 상장된" 정확한 종목명으로 (비상장 자회사·옛 사명 금지). 대형주뿐 아니라 중소형 수혜주도 포함.
 ★ 규제·제재·사고·수입금지·리콜·경쟁사악재 같은 "악재성 사건"이면, 피해 보는 종목이 아니라 그로 인해 반사이익을 보는 '수혜 종목'(경쟁사·대체재·국내 대체 공급사)을 넣어라. (예: 中 로봇 수입금지 → 국내 로봇주 / A사 리콜 → 경쟁사 B / 특정국 수출규제 → 국내 대체 공급사)
 ★ 재료가 없으면 빈 배열.
 
@@ -112,31 +117,30 @@ export async function detectCatalysts(): Promise<RadarResult> {
   // 2) Groq가 '오늘 새로 생긴 재료' 선별 + 관련주 후보
   const raw = await pickCatalysts(capped, since);
 
-  // 3) 관련주 회사명 → 종목코드 확정(안 잡히면 제외)
-  const names = [...new Set(raw.flatMap((r) => r.stocks || []))].slice(0, 40);
-  const codeMap: Record<string, string> = {};
-  await Promise.all(
-    names.map(async (n) => {
-      const hits = await searchStock(n);
-      if (hits[0]) codeMap[n] = hits[0].code;
-    }),
-  );
-
+  // 3) 관련주: AI 회사명 → 종목코드(변형 매칭), 부족하면 테마 주도주로 보강
+  const themes = await fetchThemes().catch(() => [] as Theme[]);
   const linkOf = (headline: string) =>
     headlines.find((h) => h.title === headline)?.link ??
     headlines.find((h) => headline && h.title.includes(headline.slice(0, 12)))?.link ??
     "";
 
-  const catalysts: Catalyst[] = raw.slice(0, 5).map((r) => ({
-    title: r.title,
-    type: r.type || "기타",
-    why: r.why,
-    sector: r.sector || "",
-    stocks: (r.stocks || [])
-      .map((n) => ({ name: n, code: codeMap[n] || "" }))
-      .filter((s) => s.code),
-    link: linkOf(r.headline),
-  }));
+  const catalysts: Catalyst[] = [];
+  for (const r of raw.slice(0, 5)) {
+    const { stocks } = await buildRelatedStocks(r.stocks || [], themes, [
+      r.title,
+      r.why,
+      r.sector,
+    ]);
+    if (!stocks.length) continue;
+    catalysts.push({
+      title: r.title,
+      type: r.type || "기타",
+      why: r.why,
+      sector: r.sector || "",
+      stocks,
+      link: linkOf(r.headline),
+    });
+  }
 
   return { since, catalysts };
 }
