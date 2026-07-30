@@ -292,6 +292,30 @@ export interface DiscFeedItem {
   link: string;
   repeat?: Repeat; // 같은 유형 과거 공시 반응 (계산된 것만)
   verdict?: string;
+  mcap?: number | null; // 시가총액(억원)
+  mcapLabel?: string; // "1,210조" 같은 표시용
+}
+
+// 네이버 시가총액 (억원 단위 숫자 + 표시용 라벨)
+async function fetchMarketCap(code: string): Promise<{ mcap: number | null; label: string }> {
+  try {
+    const r = await fetch(`https://m.stock.naver.com/api/stock/${code}/integration`, {
+      headers: { "User-Agent": "Mozilla/5.0", referer: "https://m.stock.naver.com/" },
+      cache: "no-store",
+    });
+    const j = (await r.json()) as { totalInfos?: { code: string; value: string }[] };
+    const raw = j.totalInfos?.find((x) => x.code === "marketValue")?.value ?? "";
+    if (!raw) return { mcap: null, label: "" };
+    // "1,210조 1,797억" | "5,432억"
+    const jo = raw.match(/([\d,]+)\s*조/);
+    const eok = raw.match(/([\d,]+)\s*억/);
+    const n = (s?: string) => (s ? parseInt(s.replace(/,/g, ""), 10) : 0);
+    const mcap = n(jo?.[1]) * 10000 + n(eok?.[1]); // 억원
+    const label = jo ? `${jo[1]}조` : eok ? `${eok[1]}억` : raw;
+    return { mcap: mcap || null, label };
+  } catch {
+    return { mcap: null, label: "" };
+  }
 }
 // 뉴스 재료 한 줄 (장마감 이후 전부 + 링크)
 export interface NewsFeedItem {
@@ -419,44 +443,57 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   const disc = await todayDisclosures();
   const cleanNm = (t: string) =>
     t.replace(/\s+$/, "").replace(/^주요사항보고서\(?/, "").replace(/\)$/, "");
-  const discFeed: DiscFeedItem[] = [];
+  // 1) 항목 만들고 시가총액 조회(6개씩 배치)
+  const discFeed: DiscFeedItem[] = disc.items.map((d) => ({
+    name: d.name,
+    code: d.code,
+    title: cleanNm(d.title),
+    type: d.type,
+    dir: d.dir,
+    link: d.link,
+  }));
+  const mcapCodes = [...new Set(discFeed.map((d) => d.code))];
+  const mcapMap: Record<string, { mcap: number | null; label: string }> = {};
+  for (let i = 0; i < mcapCodes.length; i += 6) {
+    await Promise.all(
+      mcapCodes.slice(i, i + 6).map(async (c) => (mcapMap[c] = await fetchMarketCap(c))),
+    );
+  }
+  for (const d of discFeed) {
+    d.mcap = mcapMap[d.code]?.mcap ?? null;
+    d.mcapLabel = mcapMap[d.code]?.label ?? "";
+  }
+  // 2) 시가총액 큰 순으로 정렬 (없으면 뒤로)
+  discFeed.sort((a, b) => (b.mcap ?? -1) - (a.mcap ?? -1));
+
+  // 3) 호재는 시총 큰 순으로 14건까지 과거 같은 유형 공시 반응 채점
   let scored = 0;
-  for (const d of disc.items) {
-    const item: DiscFeedItem = {
-      name: d.name,
-      code: d.code,
-      title: cleanNm(d.title),
-      type: d.type,
-      dir: d.dir,
-      link: d.link,
-    };
-    // 호재는 상위 14건까지 과거 같은 유형 공시 반응을 채점(비용 제한)
-    if (d.dir === "호재" && scored < 14) {
-      scored++;
-      const repeat = await discRepeat(d, todayYmd);
-      item.repeat = repeat;
-      if (repeat.scored > 0 && repeat.avg != null) {
-        item.verdict = `과거 ${repeat.episodes}회 · 평균 ${repeat.avg >= 0 ? "+" : ""}${repeat.avg.toFixed(1)}%${
-          repeat.upRate != null ? ` (상승 ${repeat.upRate.toFixed(0)}%)` : ""
-        }`;
-      } else {
-        item.verdict = "과거 같은 공시 없음 (첫 사례)";
-      }
-      // AI 주목 후보에도 추가 (참고용 랭킹)
-      all.push(
-        judge({
-          source: "공시",
-          title: `${d.name} — ${item.title}`,
-          type: d.type,
-          stage: "확정",
-          why: `${d.name} ${d.type} 공시 (DART)`,
-          stocks: [{ name: d.name, code: d.code, via: "AI" }],
-          repeat,
-          link: d.link,
-        }),
-      );
-    }
-    discFeed.push(item);
+  for (const item of discFeed) {
+    if (item.dir !== "호재" || scored >= 14) continue;
+    scored++;
+    const src = disc.items.find((x) => x.code === item.code && cleanNm(x.title) === item.title);
+    if (!src) continue;
+    const repeat = await discRepeat(src, todayYmd);
+    item.repeat = repeat;
+    item.verdict =
+      repeat.scored > 0 && repeat.avg != null
+        ? `과거 ${repeat.episodes}회 · 평균 ${repeat.avg >= 0 ? "+" : ""}${repeat.avg.toFixed(1)}%${
+            repeat.upRate != null ? ` (상승 ${repeat.upRate.toFixed(0)}%)` : ""
+          }`
+        : "과거 같은 공시 없음 (첫 사례)";
+    // AI 주목 후보에도 추가 (참고용 랭킹)
+    all.push(
+      judge({
+        source: "공시",
+        title: `${item.name} — ${item.title}`,
+        type: item.type,
+        stage: "확정",
+        why: `${item.name} ${item.type} 공시 (DART)${item.mcapLabel ? ` · 시총 ${item.mcapLabel}` : ""}`,
+        stocks: [{ name: item.name, code: item.code, via: "AI" }],
+        repeat,
+        link: item.link,
+      }),
+    );
   }
 
   // ── 시황: 오늘 부각 테마 top5 + 후보별 테마 매칭 ────────────────────────

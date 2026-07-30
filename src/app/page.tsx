@@ -42,6 +42,8 @@ interface DiscFeedItem {
   link: string;
   repeat?: Repeat;
   verdict?: string;
+  mcap?: number | null;
+  mcapLabel?: string;
 }
 interface NewsFeedItem {
   title: string;
@@ -208,6 +210,7 @@ export default function HomePage() {
           {/* 공시 목록 */}
           {tab === "공시" && (
             <>
+              <p className="mb-2 text-xs text-zinc-500">시가총액 큰 순 정렬</p>
               <div className="mb-2 flex gap-2">
                 {(["호재", "악재", "전체"] as const).map((d) => (
                   <button
@@ -251,6 +254,11 @@ export default function HomePage() {
                             {d.name}
                           </a>
                           <span className="text-[10px] text-zinc-600">{d.code}</span>
+                          {d.mcapLabel && (
+                            <span className="rounded bg-ink-700 px-1 py-0.5 text-[10px] text-zinc-300">
+                              시총 {d.mcapLabel}
+                            </span>
+                          )}
                           <span className="rounded bg-zinc-500/15 px-1 py-0.5 text-[10px] text-zinc-400">
                             {d.type}
                           </span>
