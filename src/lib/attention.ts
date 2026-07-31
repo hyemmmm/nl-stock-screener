@@ -75,6 +75,54 @@ export async function fetchOverMarket(
   }
 }
 
+// ── 1-D) 후보 풀: 오늘 강세 테마의 주도주 ─────────────────────────────────
+//   "오늘 뜨는 테마" = 등락률 상위 테마. "주도주" = 그 테마 안에서 가장 많이 오른 종목.
+//   MTS의 [테마 순위 → 종목]과 같은 흐름을 자동화한 것.
+export async function fetchThemeLeaders(
+  themes: Theme[],
+): Promise<{ code: string; name: string; theme: string; themeChg: number; leadRank: number }[]> {
+  const strong = [...themes].sort((a, b) => b.chg - a.chg).slice(0, 6);
+  const out: { code: string; name: string; theme: string; themeChg: number; leadRank: number }[] = [];
+  const seen = new Set<string>();
+  for (const t of strong) {
+    const list = await fetchThemeStocks(t.no).catch(() => []);
+    // 네이버는 등락률 내림차순 → 앞쪽이 그 테마의 주도주
+    let rank = 0;
+    for (const s of list.slice(0, 4)) {
+      rank++;
+      if (seen.has(s.code) || NOT_STOCK.test(s.name)) continue;
+      seen.add(s.code);
+      out.push({ code: s.code, name: s.name, theme: t.name, themeChg: t.chg, leadRank: rank });
+    }
+  }
+  return out.slice(0, 20);
+}
+
+// 회전율: 거래대금 ÷ 시가총액 — 대형주 편향 없이 "얼마나 뜨거운지" 정규화
+export async function fetchTurnover(
+  code: string,
+): Promise<{ value: number | null; mcap: number | null; turnover: number | null }> {
+  try {
+    const r = await fetch(`https://m.stock.naver.com/api/stock/${code}/integration`, UA);
+    const j = (await r.json()) as { totalInfos?: { code: string; value: string }[] };
+    const get = (k: string) => j.totalInfos?.find((x) => x.code === k)?.value ?? "";
+    // "28조 2,428억" → 억 단위 숫자
+    const toEok = (s: string) => {
+      if (!s) return null;
+      const jo = s.match(/([\d,]+)\s*조/);
+      const eok = s.match(/([\d,]+)\s*억/);
+      const n = (v?: string) => (v ? parseInt(v.replace(/,/g, ""), 10) : 0);
+      const val = n(jo?.[1]) * 10000 + n(eok?.[1]);
+      return val || null;
+    };
+    const value = toEok(get("accumulatedTradingValue"));
+    const mcap = toEok(get("marketValue"));
+    return { value, mcap, turnover: value && mcap ? (value / mcap) * 100 : null };
+  } catch {
+    return { value: null, mcap: null, turnover: null };
+  }
+}
+
 // ── 1-C) 후보 풀(대안): 네이버 조회수 상위 ────────────────────────────────
 export async function fetchMostSearched(): Promise<{ code: string; name: string }[]> {
   try {
@@ -168,7 +216,9 @@ export interface AttentionStock {
   code: string;
   name: string;
   rank: number;
-  tradeValue: number | null; // 전일 거래대금(백만원)
+  tradeValue: number | null; // 거래대금(백만원 or 억) — 풀에 따라
+  turnover: number | null; // 회전율 = 거래대금/시총 (%) — 대형주 편향 제거
+  leadRank: number | null; // 소속 테마 안에서의 등락률 순위(1=주도주)
   overPct: number | null; // 시간외/장전 예상 등락률
   overSession: string; // "시간외" | "장전"
   // 차트
@@ -203,18 +253,27 @@ export interface AttentionResult {
   stocks: AttentionStock[];
 }
 
-export async function analyzeAttention(
-  poolKind: "value" | "search" = "value",
-): Promise<AttentionResult> {
-  // 후보 풀: 거래대금 상위(기본) — 실제 돈이 몰린 곳 / 조회수 상위(대안)
+export type PoolKind = "theme" | "value" | "search";
+
+export async function analyzeAttention(poolKind: PoolKind = "theme"): Promise<AttentionResult> {
+  const themes = await fetchThemes().catch(() => [] as Theme[]);
+
+  // 후보 풀
+  //  theme  : 오늘 강세 테마의 주도주 (기본) — "오늘 뜨는 테마에서 1등 종목"
+  //  value  : 거래대금 상위 (대형주 편향 있음)
+  //  search : 조회수 상위
+  const leaders = poolKind === "theme" ? await fetchThemeLeaders(themes) : [];
   const valueList = poolKind === "value" ? await fetchTopValue() : [];
   const pool =
-    poolKind === "value"
-      ? valueList.map((x) => ({ code: x.code, name: x.name }))
-      : await fetchMostSearched();
+    poolKind === "theme"
+      ? leaders.map((x) => ({ code: x.code, name: x.name }))
+      : poolKind === "value"
+        ? valueList.map((x) => ({ code: x.code, name: x.name }))
+        : await fetchMostSearched();
   const valueOf: Record<string, number> = {};
   for (const v of valueList) valueOf[v.code] = v.value;
-  const themes = await fetchThemes().catch(() => [] as Theme[]);
+  const leadOf: Record<string, { theme: string; themeChg: number; leadRank: number }> = {};
+  for (const l of leaders) leadOf[l.code] = { theme: l.theme, themeChg: l.themeChg, leadRank: l.leadRank };
   // 오늘 강한 테마의 구성종목 → 종목별 테마 매칭용
   const strong = [...themes].sort((a, b) => b.chg - a.chg).slice(0, 8);
   const themeOf: Record<string, { name: string; chg: number }> = {};
@@ -226,11 +285,12 @@ export async function analyzeAttention(
   const stocks: AttentionStock[] = [];
   for (let i = 0; i < pool.length; i++) {
     const { code, name } = pool[i];
-    const [rows, trend, news, over] = await Promise.all([
+    const [rows, trend, news, over, turn] = await Promise.all([
       fetchDaily(code),
       fetchTrend(code),
       searchNews(name, { display: 10, sort: "date" }),
       fetchOverMarket(code),
+      fetchTurnover(code),
     ]);
     if (rows.length < 21) continue;
     const last = rows[rows.length - 1];
@@ -261,7 +321,10 @@ export async function analyzeAttention(
         bad: BAD_W.test(n.title),
       }));
 
-    const theme = themeOf[code] ?? null;
+    const lead = leadOf[code];
+    const theme = lead
+      ? { name: lead.theme, chg: lead.themeChg }
+      : (themeOf[code] ?? null);
 
     // ── 매수 관심 vs 매도 관심 판정 ──
     const buy: string[] = [];
@@ -330,6 +393,21 @@ export async function analyzeAttention(
       sell.push(`최근 뉴스 악재성 ${b}건`);
       score -= 1;
     }
+    // 주도주 (테마 내 1등)
+    if (lead && lead.leadRank === 1) {
+      buy.push(`${lead.theme} 테마 주도주(1위)`);
+      score += 1;
+    }
+    // 회전율 — 시총 대비 얼마나 거래됐나 (대형주 편향 없는 열기 지표)
+    if (turn.turnover != null) {
+      if (turn.turnover >= 10) {
+        buy.push(`회전율 ${turn.turnover.toFixed(1)}% — 시총 대비 거래 폭증`);
+        score += 1;
+      } else if (turn.turnover >= 5) {
+        buy.push(`회전율 ${turn.turnover.toFixed(1)}%`);
+        score += 0.5;
+      }
+    }
     // 시간외/장전 — 장 끝난 뒤에도 사려는 관심이 남았는지 (장전에 볼 수 있는 유일한 실시간 신호)
     if (over.pct != null && over.session) {
       if (over.pct >= 1) {
@@ -366,7 +444,9 @@ export async function analyzeAttention(
       code,
       name,
       rank: i + 1,
-      tradeValue: valueOf[code] ?? null,
+      tradeValue: valueOf[code] ?? turn.value ?? null,
+      turnover: turn.turnover,
+      leadRank: leadOf[code]?.leadRank ?? null,
       overPct: over.pct,
       overSession: over.session,
       changePct,
@@ -393,7 +473,12 @@ export async function analyzeAttention(
   const k = new Date(Date.now() + 9 * 3600e3);
   return {
     date: `${k.getUTCMonth() + 1}/${k.getUTCDate()}`,
-    poolLabel: poolKind === "value" ? "전일 거래대금 상위" : "조회수 상위",
+    poolLabel:
+      poolKind === "theme"
+        ? "오늘 강세 테마의 주도주"
+        : poolKind === "value"
+          ? "거래대금 상위"
+          : "조회수 상위",
     topThemes: strong.slice(0, 5).map((t) => ({ name: t.name, chg: t.chg })),
     stocks,
   };

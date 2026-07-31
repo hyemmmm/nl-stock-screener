@@ -7,7 +7,8 @@ export const maxDuration = 60; // 조회수 상위 20종목 × (일봉·수급·
 
 export async function GET(req: Request) {
   try {
-    const pool = new URL(req.url).searchParams.get("pool") === "search" ? "search" : "value";
+    const p = new URL(req.url).searchParams.get("pool");
+    const pool = p === "value" ? "value" : p === "search" ? "search" : "theme";
     return NextResponse.json(await analyzeAttention(pool));
   } catch (err) {
     console.error("[/api/attention]", err);

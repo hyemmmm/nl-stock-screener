@@ -14,6 +14,8 @@ interface AttentionStock {
   name: string;
   rank: number;
   tradeValue: number | null;
+  turnover: number | null;
+  leadRank: number | null;
   overPct: number | null;
   overSession: string;
   changePct: number | null;
@@ -56,9 +58,9 @@ export default function AttentionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [onlyBuy, setOnlyBuy] = useState(false);
-  const [pool, setPool] = useState<"value" | "search">("value");
+  const [pool, setPool] = useState<"theme" | "value" | "search">("theme");
 
-  async function load(p: "value" | "search" = pool) {
+  async function load(p: "theme" | "value" | "search" = pool) {
     setLoading(true);
     setError(null);
     try {
@@ -86,7 +88,7 @@ export default function AttentionPage() {
             🔍 관심 종목 판별
           </h1>
           <p className="mt-2 text-sm text-zinc-400">
-            {data?.poolLabel ?? "거래대금 상위"} = 관심이 몰린 <b className="text-zinc-300">후보 풀</b>. 그 관심이{" "}
+{data?.poolLabel ?? "오늘 강세 테마의 주도주"} = 관심이 몰린 <b className="text-zinc-300">후보 풀</b>. 그 관심이{" "}
             <span className="text-up">사려는 관심</span>인지{" "}
             <span className="text-down">팔려는 관심</span>인지 재료·차트·거래량·시황·수급으로 분해.
           </p>
@@ -98,14 +100,15 @@ export default function AttentionPage() {
           <select
             value={pool}
             onChange={(e) => {
-              const p = e.target.value as "value" | "search";
+              const p = e.target.value as "theme" | "value" | "search";
               setPool(p);
               load(p);
             }}
             disabled={loading}
             className="rounded-lg border border-ink-600 bg-ink-800 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-indigo-500 disabled:opacity-50"
           >
-            <option value="value">전일 거래대금 상위</option>
+            <option value="theme">오늘 강세 테마 주도주</option>
+            <option value="value">거래대금 상위</option>
             <option value="search">조회수 상위</option>
           </select>
           <button
@@ -189,9 +192,23 @@ export default function AttentionPage() {
                       )}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                      {s.tradeValue != null && (
-                        <span className="rounded bg-ink-700 px-1.5 py-0.5 text-zinc-300">
-                          거래대금 {(s.tradeValue / 100).toFixed(0)}억
+                      {s.leadRank === 1 && (
+                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 font-medium text-amber-300">
+                          👑 테마 주도주
+                        </span>
+                      )}
+                      {s.leadRank != null && s.leadRank > 1 && (
+                        <span className="rounded bg-ink-700 px-1.5 py-0.5 text-zinc-400">
+                          테마 {s.leadRank}위
+                        </span>
+                      )}
+                      {s.turnover != null && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 ${
+                            s.turnover >= 10 ? "bg-up/15 text-up" : "bg-ink-700 text-zinc-300"
+                          }`}
+                        >
+                          회전율 {s.turnover.toFixed(1)}%
                         </span>
                       )}
                       {s.overPct != null && s.overSession && (
