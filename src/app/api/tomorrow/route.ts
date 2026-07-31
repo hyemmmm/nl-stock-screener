@@ -10,16 +10,24 @@ export const maxDuration = 60; // 뉴스+공시+반복성 종합 파이프라인
 
 const DIR = path.join(process.cwd(), "data", "tomorrow");
 const p2 = (n: number) => String(n).padStart(2, "0");
-const kstDate = () => {
-  const d = new Date(Date.now() + 9 * 3600e3);
-  return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`;
+
+// 캐시 키 = "직전 장마감(15:30 KST) 시점".
+//   같은 날이라도 15:30 전/후는 다른 재료 구간이므로 키가 달라야 한다.
+//   (날짜만 키로 쓰면 오전에 만든 캐시가 마감 후에도 재사용돼 갱신이 안 됨)
+const sessionKey = () => {
+  const now = Date.now();
+  const k = new Date(now + 9 * 3600e3);
+  let cut = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate(), 6, 30, 0); // 15:30 KST
+  if (now < cut) cut -= 864e5; // 아직 마감 전 → 전일 마감 기준
+  const c = new Date(cut + 9 * 3600e3);
+  return `${c.getUTCFullYear()}-${p2(c.getUTCMonth() + 1)}-${p2(c.getUTCDate())}_1530`;
 };
 
-// 후보는 하루 한 번만 생성해 고정한다(새로고침마다 바뀌지 않도록 + AI 토큰 절약).
+// 후보는 마감 구간마다 한 번만 생성해 고정한다(새로고침마다 바뀌지 않도록 + AI 토큰 절약).
 // 다시 뽑고 싶으면 ?refresh=1
 export async function GET(req: Request) {
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
-  const file = path.join(DIR, `${kstDate()}.json`);
+  const file = path.join(DIR, `${sessionKey()}.json`);
 
   if (!refresh) {
     try {
