@@ -23,15 +23,21 @@ const sessionKey = () => {
   return `${c.getUTCFullYear()}-${p2(c.getUTCMonth() + 1)}-${p2(c.getUTCDate())}_1530`;
 };
 
+// 메모리 캐시 — 서버리스(Vercel)는 파일이 안 남으므로 같은 인스턴스 내에서만이라도 재사용
+let memCache: { key: string; data: TomorrowResult } | null = null;
+
 // 후보는 마감 구간마다 한 번만 생성해 고정한다(새로고침마다 바뀌지 않도록 + AI 토큰 절약).
 // 다시 뽑고 싶으면 ?refresh=1
 export async function GET(req: Request) {
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
-  const file = path.join(DIR, `${sessionKey()}.json`);
+  const key = sessionKey();
+  const file = path.join(DIR, `${key}.json`);
 
   if (!refresh) {
+    if (memCache?.key === key) return NextResponse.json({ ...memCache.data, cached: true });
     try {
       const cached = JSON.parse(await fs.readFile(file, "utf8")) as TomorrowResult;
+      memCache = { key, data: cached };
       return NextResponse.json({ ...cached, cached: true });
     } catch {
       // 캐시 없음 → 아래에서 생성
@@ -42,6 +48,7 @@ export async function GET(req: Request) {
     const result = await buildTomorrow();
     // 저장(후보가 있을 때만 — 실패한 빈 결과로 하루치를 덮지 않도록)
     if (result.candidates.length || result.discFeed.length || result.newsFeed.length) {
+      memCache = { key, data: result }; // 서버리스에서도 같은 인스턴스면 재사용
       await fs.mkdir(DIR, { recursive: true }).catch(() => {});
       await fs.writeFile(file, JSON.stringify(result), "utf8").catch(() => {});
     }

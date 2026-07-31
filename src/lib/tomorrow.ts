@@ -11,6 +11,15 @@ import { todayDisclosures, type Disclosure } from "./dart";
 import { fetchThemes, type Theme } from "./issues";
 
 const H = { headers: { referer: "https://finance.naver.com/" }, cache: "no-store" as const };
+// 서버리스(Vercel)는 함수 실행 60초 제한 + 파일 캐시가 없어 매 요청이 풀 빌드다.
+// 무거운 보강 단계를 줄여 타임아웃을 막는다(로컬은 그대로 전부 수행).
+const LITE = !!process.env.VERCEL;
+const LIM = {
+  newsCats: LITE ? 3 : 5, // 뉴스 재료 개수
+  discScore: LITE ? 5 : 14, // 과거 반응 채점할 호재 공시 수
+  mcap: LITE ? 12 : 60, // 시가총액 조회 종목 수
+  volCheck: !LITE, // ⚡ 거래량 이력 조회 여부
+};
 const p2 = (n: number) => String(n).padStart(2, "0");
 const ymdOf = (d: Date) => `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
 
@@ -452,7 +461,7 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     dir: d.dir,
     link: d.link,
   }));
-  const mcapCodes = [...new Set(discFeed.map((d) => d.code))];
+  const mcapCodes = [...new Set(discFeed.map((d) => d.code))].slice(0, LIM.mcap);
   const mcapMap: Record<string, { mcap: number | null; label: string }> = {};
   for (let i = 0; i < mcapCodes.length; i += 6) {
     await Promise.all(
@@ -469,7 +478,7 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   // 3) 호재는 시총 큰 순으로 14건까지 과거 같은 유형 공시 반응 채점
   let scored = 0;
   for (const item of discFeed) {
-    if (item.dir !== "호재" || scored >= 14) continue;
+    if (item.dir !== "호재" || scored >= LIM.discScore) continue;
     scored++;
     const src = disc.items.find((x) => x.code === item.code && cleanNm(x.title) === item.title);
     if (!src) continue;
@@ -511,7 +520,7 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
   }
 
   // ── 거래량: 최근 1,000만주+ 이력 표시 (필터 아님) ─────────────────────────
-  const codes = [...new Set(all.flatMap((c) => c.stocks.map((s) => s.code)))];
+  const codes = LIM.volCheck ? [...new Set(all.flatMap((c) => c.stocks.map((s) => s.code)))] : [];
   const volMap: Record<string, boolean> = {};
   for (let i = 0; i < codes.length; i += 6) {
     await Promise.all(
