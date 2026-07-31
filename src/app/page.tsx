@@ -121,7 +121,10 @@ export default function HomePage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <Link href="/score" className="text-xs text-indigo-400 hover:text-indigo-300">
+          <Link href="/attention" className="text-xs text-indigo-400 hover:text-indigo-300">
+            🔍 관심종목 →
+          </Link>
+          <Link href="/score" className="text-xs text-zinc-500 hover:text-zinc-300">
             성적표 →
           </Link>
           <Link href="/backtest" className="text-xs text-zinc-500 hover:text-zinc-300">
