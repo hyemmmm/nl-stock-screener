@@ -5,9 +5,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // 조회수 상위 20종목 × (일봉·수급·뉴스)
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    return NextResponse.json(await analyzeAttention());
+    const pool = new URL(req.url).searchParams.get("pool") === "search" ? "search" : "value";
+    return NextResponse.json(await analyzeAttention(pool));
   } catch (err) {
     console.error("[/api/attention]", err);
     return NextResponse.json({ error: "관심 종목 분석에 실패했습니다" }, { status: 500 });

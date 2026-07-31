@@ -13,6 +13,9 @@ interface AttentionStock {
   code: string;
   name: string;
   rank: number;
+  tradeValue: number | null;
+  overPct: number | null;
+  overSession: string;
   changePct: number | null;
   closePos: number | null;
   vsMa5: number | null;
@@ -33,6 +36,7 @@ interface AttentionStock {
 }
 interface AttentionResult {
   date: string;
+  poolLabel: string;
   topThemes: { name: string; chg: number }[];
   stocks: AttentionStock[];
   error?: string;
@@ -52,12 +56,13 @@ export default function AttentionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [onlyBuy, setOnlyBuy] = useState(false);
+  const [pool, setPool] = useState<"value" | "search">("value");
 
-  async function load() {
+  async function load(p: "value" | "search" = pool) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/attention", { cache: "no-store" });
+      const res = await fetch(`/api/attention?pool=${p}`, { cache: "no-store" });
       const json = (await res.json()) as AttentionResult;
       if (json.error) setError(json.error);
       else setData(json);
@@ -81,7 +86,7 @@ export default function AttentionPage() {
             🔍 관심 종목 판별
           </h1>
           <p className="mt-2 text-sm text-zinc-400">
-            조회수 상위 = 관심이 몰린 <b className="text-zinc-300">후보 풀</b>. 그 관심이{" "}
+            {data?.poolLabel ?? "거래대금 상위"} = 관심이 몰린 <b className="text-zinc-300">후보 풀</b>. 그 관심이{" "}
             <span className="text-up">사려는 관심</span>인지{" "}
             <span className="text-down">팔려는 관심</span>인지 재료·차트·거래량·시황·수급으로 분해.
           </p>
@@ -90,8 +95,21 @@ export default function AttentionPage() {
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 내일 후보
           </Link>
+          <select
+            value={pool}
+            onChange={(e) => {
+              const p = e.target.value as "value" | "search";
+              setPool(p);
+              load(p);
+            }}
+            disabled={loading}
+            className="rounded-lg border border-ink-600 bg-ink-800 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+          >
+            <option value="value">전일 거래대금 상위</option>
+            <option value="search">조회수 상위</option>
+          </select>
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
@@ -167,6 +185,22 @@ export default function AttentionPage() {
                           }`}
                         >
                           {s.themeName} {pct(s.themeChg)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                      {s.tradeValue != null && (
+                        <span className="rounded bg-ink-700 px-1.5 py-0.5 text-zinc-300">
+                          거래대금 {(s.tradeValue / 100).toFixed(0)}억
+                        </span>
+                      )}
+                      {s.overPct != null && s.overSession && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 ${
+                            s.overPct >= 0 ? "bg-up/15 text-up" : "bg-down/15 text-down"
+                          }`}
+                        >
+                          {s.overSession} {pct(s.overPct)}
                         </span>
                       )}
                     </div>

@@ -16,7 +16,66 @@ const dec = (b: ArrayBuffer) => new TextDecoder("euc-kr").decode(Buffer.from(b))
 const p2 = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
 
-// ── 1) 후보 풀: 네이버 조회수 상위 ────────────────────────────────────────
+// ── 1-A) 후보 풀: 전일 거래대금 상위 (돈이 실제로 몰린 곳 — 장전 확정 데이터)
+const NOT_STOCK =
+  /KODEX|TIGER|KBSTAR|ARIRANG|ACE |SOL |PLUS |RISE |HANARO|KOSEF|ETN|레버리지|인버스|선물|채권|국고/i;
+
+export async function fetchTopValue(): Promise<{ code: string; name: string; value: number }[]> {
+  const out: { code: string; name: string; value: number }[] = [];
+  for (const sosok of [0, 1]) {
+    try {
+      const buf = await (
+        await fetch(`https://finance.naver.com/sise/sise_quant.naver?sosok=${sosok}`, NAVER)
+      ).arrayBuffer();
+      const txt = dec(buf);
+      const anchors = [...txt.matchAll(/\/item\/main\.naver\?code=(\d{6})"[^>]*>([^<]+)<\/a>/g)];
+      for (let k = 0; k < anchors.length; k++) {
+        const m = anchors[k];
+        const start = m.index ?? 0;
+        const end = k + 1 < anchors.length ? (anchors[k + 1].index ?? txt.length) : start + 700;
+        const chunk = txt.slice(start, end);
+        // [현재가, 전일비, 등락률, 거래량, 거래대금, ...]
+        const nums = [
+          ...chunk.matchAll(/<td class="(?:number|rate_up|rate_down)"[^>]*>([\s\S]*?)<\/td>/g),
+        ].map((x) => x[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+        const value = parseInt((nums[4] || "").replace(/[^\d]/g, ""), 10);
+        const name = m[2].trim();
+        if (!value || NOT_STOCK.test(name)) continue;
+        out.push({ code: m[1], name, value }); // 거래대금(백만원)
+      }
+    } catch {}
+  }
+  const seen = new Set<string>();
+  return out
+    .filter((x) => (seen.has(x.code) ? false : (seen.add(x.code), true)))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 20);
+}
+
+// ── 1-B) 시간외 단일가 / 장전 예상체결 (장 끝난 뒤에도 남은 관심) ──────────
+export async function fetchOverMarket(
+  code: string,
+): Promise<{ pct: number | null; session: string }> {
+  try {
+    const r = await fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, UA);
+    const j = (await r.json()) as {
+      overMarketPriceInfo?: { fluctuationsRatio?: string; tradingSessionType?: string };
+    };
+    const info = j.overMarketPriceInfo;
+    if (!info?.fluctuationsRatio) return { pct: null, session: "" };
+    const label =
+      info.tradingSessionType === "AFTER_MARKET"
+        ? "시간외"
+        : info.tradingSessionType === "BEFORE_MARKET"
+          ? "장전"
+          : "";
+    return { pct: parseFloat(info.fluctuationsRatio), session: label };
+  } catch {
+    return { pct: null, session: "" };
+  }
+}
+
+// ── 1-C) 후보 풀(대안): 네이버 조회수 상위 ────────────────────────────────
 export async function fetchMostSearched(): Promise<{ code: string; name: string }[]> {
   try {
     const buf = await (
@@ -109,6 +168,9 @@ export interface AttentionStock {
   code: string;
   name: string;
   rank: number;
+  tradeValue: number | null; // 전일 거래대금(백만원)
+  overPct: number | null; // 시간외/장전 예상 등락률
+  overSession: string; // "시간외" | "장전"
   // 차트
   changePct: number | null; // 전일 등락률
   closePos: number | null; // 전일 종가의 캔들 내 위치(0=저가, 100=고가)
@@ -136,12 +198,22 @@ export interface AttentionStock {
 
 export interface AttentionResult {
   date: string;
+  poolLabel: string;
   topThemes: { name: string; chg: number }[];
   stocks: AttentionStock[];
 }
 
-export async function analyzeAttention(): Promise<AttentionResult> {
-  const pool = await fetchMostSearched();
+export async function analyzeAttention(
+  poolKind: "value" | "search" = "value",
+): Promise<AttentionResult> {
+  // 후보 풀: 거래대금 상위(기본) — 실제 돈이 몰린 곳 / 조회수 상위(대안)
+  const valueList = poolKind === "value" ? await fetchTopValue() : [];
+  const pool =
+    poolKind === "value"
+      ? valueList.map((x) => ({ code: x.code, name: x.name }))
+      : await fetchMostSearched();
+  const valueOf: Record<string, number> = {};
+  for (const v of valueList) valueOf[v.code] = v.value;
   const themes = await fetchThemes().catch(() => [] as Theme[]);
   // 오늘 강한 테마의 구성종목 → 종목별 테마 매칭용
   const strong = [...themes].sort((a, b) => b.chg - a.chg).slice(0, 8);
@@ -154,10 +226,11 @@ export async function analyzeAttention(): Promise<AttentionResult> {
   const stocks: AttentionStock[] = [];
   for (let i = 0; i < pool.length; i++) {
     const { code, name } = pool[i];
-    const [rows, trend, news] = await Promise.all([
+    const [rows, trend, news, over] = await Promise.all([
       fetchDaily(code),
       fetchTrend(code),
       searchNews(name, { display: 10, sort: "date" }),
+      fetchOverMarket(code),
     ]);
     if (rows.length < 21) continue;
     const last = rows[rows.length - 1];
@@ -257,6 +330,20 @@ export async function analyzeAttention(): Promise<AttentionResult> {
       sell.push(`최근 뉴스 악재성 ${b}건`);
       score -= 1;
     }
+    // 시간외/장전 — 장 끝난 뒤에도 사려는 관심이 남았는지 (장전에 볼 수 있는 유일한 실시간 신호)
+    if (over.pct != null && over.session) {
+      if (over.pct >= 1) {
+        buy.push(`${over.session} +${over.pct.toFixed(1)}% — 마감 후에도 매수세`);
+        score += 1;
+      } else if (over.pct <= -1) {
+        sell.push(`${over.session} ${over.pct.toFixed(1)}% — 마감 후 매도세`);
+        score -= 1;
+      }
+      if (over.pct >= 5) {
+        sell.push(`${over.session} +${over.pct.toFixed(1)}% 과열 — 시가 갭 과대 위험`);
+        score -= 1;
+      }
+    }
     // 시황
     if (theme && theme.chg >= 2) {
       buy.push(`오늘 강세 테마(${theme.name} +${theme.chg.toFixed(1)}%)`);
@@ -279,6 +366,9 @@ export async function analyzeAttention(): Promise<AttentionResult> {
       code,
       name,
       rank: i + 1,
+      tradeValue: valueOf[code] ?? null,
+      overPct: over.pct,
+      overSession: over.session,
       changePct,
       closePos,
       vsMa5,
@@ -303,6 +393,7 @@ export async function analyzeAttention(): Promise<AttentionResult> {
   const k = new Date(Date.now() + 9 * 3600e3);
   return {
     date: `${k.getUTCMonth() + 1}/${k.getUTCDate()}`,
+    poolLabel: poolKind === "value" ? "전일 거래대금 상위" : "조회수 상위",
     topThemes: strong.slice(0, 5).map((t) => ({ name: t.name, chg: t.chg })),
     stocks,
   };
