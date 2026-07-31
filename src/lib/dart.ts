@@ -7,6 +7,7 @@
 
 import { searchNews } from "./news";
 import { simulate, TP, SL } from "./strategy";
+import { fetchMinutesByDate } from "./minutes";
 
 const BASE = "https://opendart.fss.or.kr/api";
 
@@ -163,6 +164,7 @@ export interface DiscEvent {
   closeRet: number | null; // 시가→종가 (참고)
   exit: string; // 청산 경로
   detail: string; // 계산 내역
+  assumed: boolean; // 분봉 없어 순서를 가정한 경우
   hot: boolean; // 공시일에 특징주·테마 뉴스로 부각됐는지 (시황 일치 여부)
   hotNote: string; // 근거 헤드라인 일부
 }
@@ -249,6 +251,13 @@ export async function disclosureBacktest(
   }
   // 시황: 그날 부각된 것 = 특징주/테마 뉴스에서 찾는다 (공시일 기준 = 매수 전 정보)
   const buzz = await fetchBuzz();
+  // 분봉: +3%/-5% 도달 순서 판정용 (최근 5거래일만 제공됨)
+  const mins: Record<string, Record<string, { t: string; p: number }[]>> = {};
+  for (let i = 0; i < codes.length; i += 6) {
+    await Promise.all(
+      codes.slice(i, i + 6).map(async (c) => (mins[c] = await fetchMinutesByDate(c))),
+    );
+  }
 
   const events: DiscEvent[] = [];
   for (const { ymd, d } of picked) {
@@ -256,7 +265,7 @@ export async function disclosureBacktest(
     let idx = -1;
     if (rows) for (let i = 0; i < rows.length; i++) if (rows[i].date > ymd) { idx = i; break; }
     const ok = idx >= 1;
-    const sim = ok ? simulate(rows[idx]) : null;
+    const sim = ok ? simulate(rows[idx], mins[d.code]?.[rows[idx].date]) : null;
     events.push({
       date: `${+ymd.slice(4, 6)}/${+ymd.slice(6, 8)}`,
       sessionDate: ok ? `${+rows[idx].date.slice(4, 6)}/${+rows[idx].date.slice(6, 8)}` : "",
@@ -270,6 +279,7 @@ export async function disclosureBacktest(
       closeRet: sim?.closeRet ?? null,
       exit: sim?.exit ?? "",
       detail: sim?.detail ?? "",
+      assumed: sim?.assumed ?? false,
       ...hotOf(buzz, ymd, d.name),
     });
   }

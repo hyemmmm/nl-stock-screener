@@ -6,6 +6,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { simulate, TP, SL } from "./strategy";
+import { fetchMinutesByDate } from "./minutes";
 // 기록 입력 (내일 후보 파이프라인이 넘겨주는 최소 형태)
 export interface PickInput {
   since: string;
@@ -104,6 +105,7 @@ export interface ScoredStock {
   closeRet: number | null;
   exit: string;
   detail: string;
+  assumed: boolean;
 }
 interface ScoreCache {
   [date: string]: { scoredAt: string; sessionDate: string; stocks: ScoredStock[] };
@@ -142,6 +144,7 @@ export interface RadarBoard {
     closeRet: number | null;
     exit: string;
     detail: string;
+    assumed: boolean;
   }[];
 }
 
@@ -156,6 +159,8 @@ export async function getRadarBoard(): Promise<RadarBoard> {
     const codes = [...new Set(p.catalysts.flatMap((c) => c.stocks.map((s) => s.code)))];
     const px: Record<string, { date: string; open: number; high: number; low: number; close: number }[]> = {};
     await Promise.all(codes.map(async (c) => (px[c] = await fetchDaily(c))));
+    const mins: Record<string, Record<string, { t: string; p: number }[]>> = {};
+    await Promise.all(codes.map(async (c) => (mins[c] = await fetchMinutesByDate(c))));
 
     const move = (code: string) => {
       const rows = px[code];
@@ -167,7 +172,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
           break;
         }
       if (idx < 1) return null;
-      const sim = simulate(rows[idx]);
+      const sim = simulate(rows[idx], mins[code]?.[rows[idx].date]);
       return { sessionDate: rows[idx].date, sim };
     };
 
@@ -187,6 +192,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
           closeRet: m?.sim.closeRet ?? null,
           exit: m?.sim.exit ?? "",
           detail: m?.sim.detail ?? "",
+          assumed: m?.sim.assumed ?? false,
         });
       }
     if (stocks.some((s) => s.stratRet != null))
@@ -218,6 +224,7 @@ export async function getRadarBoard(): Promise<RadarBoard> {
         closeRet: s.closeRet,
         exit: s.exit,
         detail: s.detail ?? "",
+        assumed: s.assumed ?? false,
       });
   }
 

@@ -16,6 +16,7 @@ interface DiscEvent {
   closeRet: number | null;
   exit: string;
   detail: string;
+  assumed: boolean;
   hot: boolean;
   hotNote: string;
 }
@@ -268,7 +269,9 @@ export default function DiscBacktestPage() {
                       <td className="whitespace-nowrap px-2 py-2 text-right">
                         <div className={`text-base font-bold ${cls(e.stratRet)}`}>{pct(e.stratRet)}</div>
                         {e.detail && (
-                          <div className="text-[10px] font-normal text-zinc-500">{e.detail}</div>
+                          <div className={`text-[10px] font-normal ${e.assumed ? "text-amber-400" : "text-zinc-500"}`}>
+                            {e.detail}
+                          </div>
                         )}
                       </td>
                     </tr>

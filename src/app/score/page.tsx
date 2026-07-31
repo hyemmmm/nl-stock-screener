@@ -16,6 +16,7 @@ interface Row {
   closeRet: number | null;
   exit: string;
   detail: string;
+  assumed: boolean;
 }
 interface RadarBoard {
   totalDays: number;
@@ -178,7 +179,9 @@ export default function RadarScorePage() {
                       <td className="whitespace-nowrap px-2 py-2 text-right">
                         <div className={`text-base font-bold ${cls(r.stratRet)}`}>{pct(r.stratRet)}</div>
                         {r.detail && (
-                          <div className="text-[10px] font-normal text-zinc-500">{r.detail}</div>
+                          <div className={`text-[10px] font-normal ${r.assumed ? "text-amber-400" : "text-zinc-500"}`}>
+                            {r.detail}
+                          </div>
                         )}
                       </td>
                     </tr>

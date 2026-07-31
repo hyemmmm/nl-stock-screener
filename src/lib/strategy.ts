@@ -17,6 +17,23 @@ export interface Bar {
   close: number;
 }
 
+// 분봉(시각·가격, 오름차순)으로 +3%/-5% 중 무엇이 먼저 왔는지 판정.
+// null이면 분봉이 없어 판정 불가(가정 사용).
+export type FirstHit = "TP" | "SL" | null;
+export function resolveOrder(
+  open: number,
+  minutes: { t: string; p: number }[] | undefined,
+): FirstHit {
+  if (!minutes || !minutes.length) return null;
+  const tp = open * (1 + TP / 100);
+  const sl = open * (1 + SL / 100);
+  for (const m of minutes) {
+    if (m.p >= tp) return "TP";
+    if (m.p <= sl) return "SL";
+  }
+  return null;
+}
+
 export interface StrategyResult {
   ret: number; // 전략 수익률 (%)
   retWorst: number; // 보수적 가정(둘 다 닿으면 손절 먼저) 수익률 (%)
@@ -26,12 +43,14 @@ export interface StrategyResult {
   tpHit: boolean; // +3% 도달 (위꼬리 포함)
   slHit: boolean; // -5% 도달
   exit: "익절" | "손절" | "종가";
-  detail: string; // 계산 내역 (예: "절반 +3% · 절반 종가 +3.7%")
+  detail: string; // 계산 내역
+  assumed: boolean; // +3%·-5% 둘 다 닿았는데 분봉이 없어 순서를 가정한 경우
 }
 
 const f = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
 
-export function simulate(bar: Bar): StrategyResult {
+// minutes: 그날 분봉(오름차순). 있으면 +3%/-5% 도달 순서를 실제로 판정한다.
+export function simulate(bar: Bar, minutes?: { t: string; p: number }[]): StrategyResult {
   const { open, high, low, close } = bar;
   const maxUp = (high / open - 1) * 100;
   const maxDown = (low / open - 1) * 100;
@@ -43,13 +62,28 @@ export function simulate(bar: Bar): StrategyResult {
   let retWorst: number;
   let exit: StrategyResult["exit"];
   let detail: string;
+  let assumed = false;
 
   if (tpHit && slHit) {
-    // 익절 먼저 가정: 전량 +3% (손절 전에 익절되어 포지션 없음)
-    ret = TP;
-    retWorst = SL; // 보수적: 손절이 먼저였다면 전량 -5%
-    exit = "익절";
-    detail = `전량 ${f(TP)} 익절 (저가 ${f(maxDown)}도 닿음)`;
+    // 둘 다 닿음 → 분봉으로 먼저 온 쪽 판정 (없으면 익절 먼저로 가정)
+    const first = resolveOrder(open, minutes);
+    if (first === "SL") {
+      ret = SL;
+      retWorst = SL;
+      exit = "손절";
+      detail = `분봉 판정: -5% 먼저 → 전량 ${f(SL)} 손절 (이후 고가 ${f(maxUp)})`;
+    } else if (first === "TP") {
+      ret = TP;
+      retWorst = TP;
+      exit = "익절";
+      detail = `분봉 판정: +3% 먼저 → 전량 ${f(TP)} 익절 (이후 저가 ${f(maxDown)})`;
+    } else {
+      ret = TP;
+      retWorst = SL;
+      exit = "익절";
+      assumed = true;
+      detail = `⚠️ 순서 불명(분봉 없음) — 익절 가정 ${f(TP)} / 최악 ${f(SL)}`;
+    }
   } else if (tpHit) {
     ret = TP;
     retWorst = ret;
@@ -66,5 +100,5 @@ export function simulate(bar: Bar): StrategyResult {
     exit = "종가";
     detail = `전량 종가 ${f(closeRet)}`;
   }
-  return { ret, retWorst, maxUp, maxDown, closeRet, tpHit, slHit, exit, detail };
+  return { ret, retWorst, maxUp, maxDown, closeRet, tpHit, slHit, exit, detail, assumed };
 }
