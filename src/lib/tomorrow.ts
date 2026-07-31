@@ -289,8 +289,36 @@ export interface Candidate {
   themeName: string | null; // 오늘 부각 테마 매칭 (시황)
   themeChg: number | null;
   link: string; // 근거: DART 공시 원문 / 뉴스 기사
+  sector?: string | null; // 재료 섹터/테마
   score: number; // 정렬용
 }
+// ── 재료 → 섹터/테마 분류 (예: 신작 출시 → 게임주) ────────────────────────
+//   키워드 기반. 종목명·공시제목·뉴스제목 어디에 걸려도 같은 라벨을 준다.
+const SECTORS: { label: string; re: RegExp }[] = [
+  { label: "게임", re: /게임|신작|출시|넥슨|엔씨|넷마블|크래프톤|펄어비스|위메이드|네오위즈|카카오게임|더블유게임|컴투스|웹젠|조이시티|데브시스터즈/ },
+  { label: "바이오·제약", re: /임상|FDA|식약처|품목허가|신약|바이오|제약|백신|치료제|셀트리온|삼성바이오|유한양행|한미약품|녹십자|종근당|대웅|메디|팜$|헬스케어|진단|의료기기/ },
+  { label: "반도체", re: /반도체|HBM|메모리|파운드리|웨이퍼|전공정|후공정|소부장|하이닉스|한미반도체|이오테크닉스|원익|주성|테스나|디아이|피에스케이|램리서치|D램|낸드/ },
+  { label: "2차전지·전기차", re: /배터리|2차전지|이차전지|양극재|음극재|전해질|분리막|전기차|EV|에코프로|엘앤에프|포스코퓨처|LG에너지|삼성SDI|SK온|리튬/ },
+  { label: "조선·해운", re: /조선소|조선업|조선주|해운(?!대)|선박|LNG선|컨테이너선|한화오션|HD현대|삼성중공업|HMM|팬오션|대한해운|해양플랜트|수주 잔고/ },
+  { label: "방산·우주", re: /방산|국방|무기|미사일|전투기|한화에어로|LIG넥스원|현대로템|한국항공우주|KAI|우주|위성|발사체/ },
+  { label: "건설·부동산", re: /건설|건축|시공|분양|재건축|재개발|부동산|아파트|현대건설|대우건설|GS건설|DL이앤씨|HDC|태영|금호건설/ },
+  { label: "금융", re: /은행|증권|보험|카드|금융지주|대출|금리|KB금융|신한지주|하나금융|우리금융|미래에셋|삼성증권|키움/ },
+  { label: "로봇·AI", re: /로봇|휴머노이드|\bAI\b|인공지능|자율주행|머신러닝|데이터센터|GPU|엔비디아|레인보우로보|두산로보|유진로봇/ },
+  { label: "원전·에너지", re: /원전|원자력|SMR|전력|송전|변압기|태양광|풍력|수소|신재생|두산에너빌리티|한전|LS일렉|효성중공업|에너지/ },
+  { label: "소비재·유통", re: /화장품|뷰티|K-뷰티|아모레|LG생활건강|코스맥스|한국콜마|씨앤씨|식품|라면|음료|유통|편의점|마트/ },
+  { label: "엔터·미디어", re: /엔터|아이돌|콘서트|드라마|영화|음원|하이브|SM|JYP|YG|CJ ENM|스튜디오|미디어|웹툰/ },
+  { label: "자동차·부품", re: /자동차|완성차|현대차|기아|모비스|타이어|부품|전장|현대위아|한온시스템|만도/ },
+  { label: "철강·소재", re: /철강|포스코|현대제철|알루미늄|구리|희토류|비철|금속|화학|정유|석유화학|LG화학|롯데케미칼/ },
+  { label: "통신·플랫폼", re: /통신|5G|6G|SKT|KT|LG유플러스|네이버|카카오|플랫폼|이커머스|쿠팡/ },
+];
+
+export function classifySector(...texts: (string | undefined | null)[]): string | null {
+  const t = texts.filter(Boolean).join(" ");
+  if (!t) return null;
+  for (const s of SECTORS) if (s.re.test(t)) return s.label;
+  return null;
+}
+
 // 공시 재료 한 줄 (전부 노출 + 링크)
 export interface DiscFeedItem {
   name: string;
@@ -303,27 +331,75 @@ export interface DiscFeedItem {
   verdict?: string;
   mcap?: number | null; // 시가총액(억원)
   mcapLabel?: string; // "1,210조" 같은 표시용
+  sector?: string | null; // 재료가 속한 섹터/테마 (예: 게임, 반도체)
 }
 
-// 네이버 시가총액 (억원 단위 숫자 + 표시용 라벨)
-async function fetchMarketCap(code: string): Promise<{ mcap: number | null; label: string }> {
+// 네이버 업종 코드(no) → 업종명. "동진쎄미켐 자사주 취득"처럼 제목·종목명에
+// 섹터 키워드가 하나도 없는 공시를 분류하기 위한 fallback. 1회 호출 후 캐시.
+let upjongMap: Record<string, string> | null = null;
+async function fetchUpjongMap(): Promise<Record<string, string>> {
+  if (upjongMap) return upjongMap;
+  try {
+    const r = await fetch("https://finance.naver.com/sise/sise_group.naver?type=upjong", H);
+    const html = new TextDecoder("euc-kr").decode(Buffer.from(await r.arrayBuffer()));
+    const m: Record<string, string> = {};
+    for (const x of html.matchAll(/sise_group_detail\.naver\?type=upjong&no=(\d+)">([^<]+)</g))
+      m[x[1]] = x[2].trim();
+    upjongMap = m;
+    return m;
+  } catch {
+    upjongMap = {};
+    return upjongMap;
+  }
+}
+// 네이버 업종명 → 앱의 섹터 라벨 (키워드 분류와 라벨을 통일해야 필터 칩이 안 쪼개진다)
+const UPJONG_TO_SECTOR: [RegExp, string][] = [
+  [/게임/, "게임"],
+  [/반도체|전자장비|디스플레이/, "반도체"],
+  [/제약|생물공학|생명과학|건강관리/, "바이오·제약"],
+  [/건설|건축|부동산/, "건설·부동산"],
+  [/조선|해운|운송인프라/, "조선·해운"],
+  [/우주|국방/, "방산·우주"],
+  [/은행|증권|보험|금융|카드/, "금융"],
+  [/전기유틸리티|가스|복합유틸리티|에너지/, "원전·에너지"],
+  [/자동차|자동차부품|타이어/, "자동차·부품"],
+  [/화학|금속|철강|종이|포장/, "철강·소재"],
+  [/화장품|가정용품|식품|음료|담배|판매업체|유통|호텔|섬유|의복/, "소비재·유통"],
+  [/미디어|엔터테인먼트|레저/, "엔터·미디어"],
+  [/소프트웨어|IT서비스|인터넷|통신/, "통신·플랫폼"],
+  [/기계|전기장비|전기제품/, "기계·장비"],
+];
+function upjongSector(name?: string): string | null {
+  if (!name) return null;
+  for (const [re, label] of UPJONG_TO_SECTOR) if (re.test(name)) return label;
+  return null;
+}
+
+// 네이버 시가총액 (억원 단위 숫자 + 표시용 라벨) + 업종 코드
+async function fetchMarketCap(
+  code: string,
+): Promise<{ mcap: number | null; label: string; industry: string }> {
   try {
     const r = await fetch(`https://m.stock.naver.com/api/stock/${code}/integration`, {
       headers: { "User-Agent": "Mozilla/5.0", referer: "https://m.stock.naver.com/" },
       cache: "no-store",
     });
-    const j = (await r.json()) as { totalInfos?: { code: string; value: string }[] };
+    const j = (await r.json()) as {
+      totalInfos?: { code: string; value: string }[];
+      industryCode?: string;
+    };
+    const industry = String(j.industryCode ?? "");
     const raw = j.totalInfos?.find((x) => x.code === "marketValue")?.value ?? "";
-    if (!raw) return { mcap: null, label: "" };
+    if (!raw) return { mcap: null, label: "", industry };
     // "1,210조 1,797억" | "5,432억"
     const jo = raw.match(/([\d,]+)\s*조/);
     const eok = raw.match(/([\d,]+)\s*억/);
     const n = (s?: string) => (s ? parseInt(s.replace(/,/g, ""), 10) : 0);
     const mcap = n(jo?.[1]) * 10000 + n(eok?.[1]); // 억원
     const label = jo ? `${jo[1]}조` : eok ? `${eok[1]}억` : raw;
-    return { mcap: mcap || null, label };
+    return { mcap: mcap || null, label, industry };
   } catch {
-    return { mcap: null, label: "" };
+    return { mcap: null, label: "", industry: "" };
   }
 }
 // 뉴스 재료 한 줄 (장마감 이후 전부 + 링크)
@@ -332,6 +408,7 @@ export interface NewsFeedItem {
   link: string;
   time: string; // HH:MM (KST)
   aiTag?: string; // AI가 주목한 경우 "규제·정책" 등
+  sector?: string | null; // 헤드라인에서 추정한 섹터/테마
   noise?: boolean; // 지역행사·봉사·인사 등 재료와 무관해 보이는 것(숨김 기본, 토글로 볼 수 있음)
   strong?: boolean; // 재료성 키워드가 뚜렷한 것(상단 정렬)
 }
@@ -383,6 +460,7 @@ function judge(
   const cand = {
     ...c,
     link: c.link ?? "",
+    sector: classifySector(c.title, c.why),
     freshness,
     verdict,
     score,
@@ -460,17 +538,25 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     type: d.type,
     dir: d.dir,
     link: d.link,
+    sector: classifySector(d.title, d.name),
   }));
   const mcapCodes = [...new Set(discFeed.map((d) => d.code))].slice(0, LIM.mcap);
-  const mcapMap: Record<string, { mcap: number | null; label: string }> = {};
-  for (let i = 0; i < mcapCodes.length; i += 6) {
-    await Promise.all(
-      mcapCodes.slice(i, i + 6).map(async (c) => (mcapMap[c] = await fetchMarketCap(c))),
-    );
-  }
+  const mcapMap: Record<string, { mcap: number | null; label: string; industry: string }> = {};
+  const [, upjong] = await Promise.all([
+    (async () => {
+      for (let i = 0; i < mcapCodes.length; i += 6) {
+        await Promise.all(
+          mcapCodes.slice(i, i + 6).map(async (c) => (mcapMap[c] = await fetchMarketCap(c))),
+        );
+      }
+    })(),
+    fetchUpjongMap(),
+  ]);
   for (const d of discFeed) {
     d.mcap = mcapMap[d.code]?.mcap ?? null;
     d.mcapLabel = mcapMap[d.code]?.label ?? "";
+    // 제목·종목명 어디에도 키워드가 없으면(자사주취득 등) 네이버 업종으로 보완
+    if (!d.sector) d.sector = upjongSector(upjong[mcapMap[d.code]?.industry ?? ""]);
   }
   // 2) 시가총액 큰 순으로 정렬 (없으면 뒤로)
   discFeed.sort((a, b) => (b.mcap ?? -1) - (a.mcap ?? -1));
@@ -555,7 +641,7 @@ export async function buildTomorrow(): Promise<TomorrowResult> {
     for (const [k, v] of aiTagOf) if (n.title.includes(k)) aiTag = v;
     const noise = !aiTag && NOISE.test(n.title);
     const strong = !!aiTag || (!noise && STRONG.test(n.title));
-    return { title: n.title, link: n.link, time: hhmm(n.ts), aiTag, noise, strong };
+    return { title: n.title, link: n.link, time: hhmm(n.ts), aiTag, noise, strong, sector: classifySector(n.title) };
   });
   // 정렬: AI 주목 → 재료성 강함 → 나머지 → 잡음 (각 그룹 내 최신순)
   const rank = (x: NewsFeedItem) => (x.aiTag ? 0 : x.noise ? 3 : x.strong ? 1 : 2);

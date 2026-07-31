@@ -31,6 +31,7 @@ interface Candidate {
   themeName: string | null;
   themeChg: number | null;
   link?: string;
+  sector?: string | null;
   score: number;
 }
 interface DiscFeedItem {
@@ -44,6 +45,7 @@ interface DiscFeedItem {
   verdict?: string;
   mcap?: number | null;
   mcapLabel?: string;
+  sector?: string | null;
 }
 interface NewsFeedItem {
   title: string;
@@ -52,6 +54,7 @@ interface NewsFeedItem {
   aiTag?: string;
   noise?: boolean;
   strong?: boolean;
+  sector?: string | null;
 }
 interface TomorrowResult {
   forDate: string;
@@ -81,6 +84,7 @@ export default function HomePage() {
   const [tab, setTab] = useState<"공시" | "뉴스" | "AI">("공시");
   const [dirFilter, setDirFilter] = useState<"전체" | "호재" | "악재">("호재");
   const [showNoise, setShowNoise] = useState(false);
+  const [sector, setSector] = useState<string | null>(null); // 섹터 필터 (null = 전체)
 
   async function load(refresh = false) {
     setLoading(true);
@@ -100,7 +104,28 @@ export default function HomePage() {
     load();
   }, []);
 
-  const disc = (data?.discFeed ?? []).filter((d) => dirFilter === "전체" || d.dir === dirFilter);
+  const disc = (data?.discFeed ?? [])
+    .filter((d) => dirFilter === "전체" || d.dir === dirFilter)
+    .filter((d) => !sector || d.sector === sector);
+  const newsShown = (data?.newsFeed ?? [])
+    .filter((n) => showNoise || !n.noise)
+    .filter((n) => !sector || n.sector === sector);
+
+  // 지금 탭에 실제로 있는 섹터를 많은 순으로 (재료가 어느 업종에 몰렸는지 = 오늘의 테마)
+  const sectorCounts = (() => {
+    const src: (string | null | undefined)[] =
+      tab === "공시"
+        ? (data?.discFeed ?? [])
+            .filter((d) => dirFilter === "전체" || d.dir === dirFilter)
+            .map((d) => d.sector)
+        : tab === "뉴스"
+          ? (data?.newsFeed ?? []).filter((n) => showNoise || !n.noise).map((n) => n.sector)
+          : (data?.candidates ?? []).map((c) => c.sector);
+    const m = new Map<string, number>();
+    for (const x of src) if (x) m.set(x, (m.get(x) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+  const cands = (data?.candidates ?? []).filter((c) => !sector || c.sector === sector);
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
@@ -210,6 +235,36 @@ export default function HomePage() {
             </Tab>
           </div>
 
+          {/* 섹터(테마) 필터 — 재료가 어느 업종에 몰렸는지 */}
+          {sectorCounts.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[11px] text-zinc-600">🏷️ 테마</span>
+              <button
+                onClick={() => setSector(null)}
+                className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                  sector === null
+                    ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                    : "border-ink-600 bg-ink-800 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                전체
+              </button>
+              {sectorCounts.map(([name, n]) => (
+                <button
+                  key={name}
+                  onClick={() => setSector(sector === name ? null : name)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                    sector === name
+                      ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                      : "border-ink-600 bg-ink-800 text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {name} <span className="text-zinc-600">{n}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* 공시 목록 */}
           {tab === "공시" && (
             <>
@@ -265,6 +320,11 @@ export default function HomePage() {
                           <span className="rounded bg-zinc-500/15 px-1 py-0.5 text-[10px] text-zinc-400">
                             {d.type}
                           </span>
+                          {d.sector && (
+                            <span className="rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300">
+                              🏷️ {d.sector}
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 text-sm text-zinc-300">{d.title}</div>
                         {d.verdict && (
@@ -315,13 +375,11 @@ export default function HomePage() {
                   </div>
                 ) : null;
               })()}
-              {data.newsFeed.length === 0 ? (
-                <Empty>장마감 이후 재료성 뉴스가 없어요.</Empty>
+              {newsShown.length === 0 ? (
+                <Empty>{sector ? `${sector} 관련 뉴스 재료가 없어요.` : "장마감 이후 재료성 뉴스가 없어요."}</Empty>
               ) : (
                 <div className="overflow-hidden rounded-2xl border border-ink-600 bg-ink-800">
-                  {data.newsFeed
-                    .filter((n) => showNoise || !n.noise)
-                    .map((n, i) => (
+                  {newsShown.map((n, i) => (
                     <a
                       key={i}
                       href={n.link}
@@ -339,6 +397,11 @@ export default function HomePage() {
                       >
                         {n.title}
                       </span>
+                      {n.sector && (
+                        <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">
+                          {n.sector}
+                        </span>
+                      )}
                       {n.aiTag && (
                         <span className="shrink-0 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
                           🤖 {n.aiTag}
@@ -358,11 +421,11 @@ export default function HomePage() {
                 AI가 재료를 정리하고 과거 반응을 붙인 것 — <b>참고용</b>. 놓친 게 있을 수 있으니 위
                 공시·뉴스 목록도 직접 훑어보세요.
               </p>
-              {data.candidates.length === 0 ? (
+              {cands.length === 0 ? (
                 <Empty>AI 정리 결과가 없어요 (목록 탭을 보세요).</Empty>
               ) : (
                 <div className="space-y-3">
-                  {data.candidates.map((c, i) => (
+                  {cands.map((c, i) => (
                     <div key={i} className="rounded-2xl border border-ink-600 bg-ink-800 p-4">
                       <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px]">
                         <span className="font-bold text-indigo-400">#{i + 1}</span>
@@ -372,6 +435,11 @@ export default function HomePage() {
                         <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-300">
                           {c.type}
                         </span>
+                        {c.sector && (
+                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">
+                            🏷️ {c.sector}
+                          </span>
+                        )}
                         <span
                           className={`rounded px-1.5 py-0.5 ${
                             c.stage === "확정"
