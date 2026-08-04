@@ -168,13 +168,20 @@ export default function UsMapPage() {
           <div className="space-y-3">
             {rows.map((r) => (
               <div key={r.sym} className="rounded-2xl border border-ink-600 bg-ink-800 p-4">
-                <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                <div className="mb-1 flex flex-wrap items-baseline gap-x-2">
                   <span className="text-base font-bold text-white">{r.label}</span>
-                  <span className="text-[10px] text-zinc-600">{r.sym}</span>
                   <span className={`text-sm font-bold ${cls(r.pct)}`}>{pct(r.pct)}</span>
+                  <span className="text-[10px] text-zinc-600">중앙값</span>
                   {r.date && r.date !== data.usDate && (
                     <span className="text-[10px] text-amber-400/70">{r.date} 기준</span>
                   )}
+                </div>
+                <div className="mb-2 flex flex-wrap gap-x-2.5 gap-y-0.5">
+                  {r.tickers.map((t) => (
+                    <span key={t.sym} className="text-[11px] text-zinc-500">
+                      {t.sym} <span className={cls(t.pct)}>{pct(t.pct)}</span>
+                    </span>
+                  ))}
                 </div>
                 {r.kr.length === 0 ? (
                   <p className="text-xs text-zinc-600">매칭되는 국내 테마가 없어요.</p>

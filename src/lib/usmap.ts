@@ -10,93 +10,129 @@ const UA = { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" as cons
 const NH = { headers: { referer: "https://finance.naver.com/", "User-Agent": "Mozilla/5.0" }, cache: "no-store" as const };
 const num = (s?: string) => (s ? parseFloat(String(s).replace(/,/g, "")) : NaN);
 
-// 미국 테마 ETF ↔ 네이버 테마명 매칭 규칙.
-// ETF는 그 테마의 '대표 바스켓'으로만 쓴다(개별주 NVDA는 예외적으로 AI 대장 역할).
-const MAP: { sym: string; label: string; re: RegExp }[] = [
-  { sym: "SMH",  label: "반도체",        re: /반도체|파운드리|웨이퍼|비메모리|시스템반도체/ },
-  { sym: "NVDA", label: "AI·GPU",       re: /AI|인공지능|HBM|온디바이스|데이터센터|GPU|CXL/ },
-  { sym: "SKYY", label: "클라우드",       re: /클라우드|데이터센터|서버/ },
-  { sym: "BOTZ", label: "로봇",          re: /로봇/ },
-  { sym: "QTUM", label: "양자컴퓨팅",     re: /양자/ },
-  { sym: "CIBR", label: "사이버보안",     re: /보안|사이버/ },
-  { sym: "LIT",  label: "2차전지",       re: /2차전지|이차전지|전기차|리튬|폐배터리|전해질|양극재|음극재/ },
-  { sym: "DRIV", label: "자율주행",       re: /자율주행|스마트카|전장/ },
-  { sym: "CARZ", label: "자동차",        re: /자동차|타이어/ },
-  { sym: "XBI",  label: "바이오",        re: /제약|바이오|임상|신약|줄기세포|유전자|항암/ },
-  { sym: "IHI",  label: "의료기기",       re: /의료기기|헬스케어|치과|미용|덴탈/ },
-  { sym: "ITA",  label: "방산",          re: /방위산업|방산|무기|전투기/ },
-  { sym: "UFO",  label: "우주·위성",      re: /우주|위성|항공/ },
-  { sym: "URA",  label: "원자력·우라늄",   re: /원자력|원전|우라늄|SMR/ },
-  { sym: "TAN",  label: "태양광",        re: /태양광|태양열/ },
-  { sym: "ICLN", label: "신재생",        re: /풍력|신재생|재생에너지|ESS/ },
-  { sym: "PLUG", label: "수소",          re: /수소|연료전지/ }, // HDRO는 일봉이 비어 있어 대표 개별주로 대체
-  { sym: "XLE",  label: "에너지·정유",    re: /석유|정유|가스|LNG|셰일/ },
-  { sym: "XLU",  label: "전력·유틸리티",  re: /전력|전선|스마트그리드|송배전|변압기/ },
-  { sym: "XLB",  label: "소재·화학",      re: /화학|철강|비철|시멘트|정밀화학/ },
-  { sym: "REMX", label: "희토류·광물",    re: /희토류|니켈|광물|마그네슘/ },
-  { sym: "GLD",  label: "금",            re: /금|귀금속/ },
-  { sym: "BOAT", label: "해운·조선",      re: /해운|조선|물류|항만/ },
-  { sym: "XLF",  label: "금융",          re: /은행|증권|보험|금융지주|카드/ },
-  { sym: "XLRE", label: "건설·부동산",    re: /건설|부동산|리츠|건자재/ },
-  { sym: "XLI",  label: "기계·산업재",    re: /기계|중장비|공작기계|공작/ },
-  { sym: "ESPO", label: "게임",          re: /게임|메타버스/ },
-  { sym: "XLC",  label: "미디어·엔터",    re: /엔터테인먼트|미디어|영화|음원|드라마|광고|웹툰/ },
-  { sym: "XLY",  label: "소비재·유통",    re: /백화점|소매유통|화장품|의류|면세/ },
-  { sym: "XLP",  label: "음식료",        re: /음식료|식품|주류|담배|사료/ },
-  { sym: "MOO",  label: "농업·비료",      re: /비료|농업|곡물|농기계/ },
-  { sym: "IBIT", label: "비트코인",       re: /가상화폐|비트코인|블록체인|암호화폐/ },
+// 미국 테마 ↔ 네이버 테마명 매칭 규칙.
+//   ETF 하나로 테마를 대표시키면 소수 종목에 몰린 테마를 통째로 놓친다.
+//   (예: 8/3 희토류 — MP +6.0% / USAR +6.1% / UUUU +6.2%인데 REMX는 +2.5%.
+//    REMX가 중국·호주 리튬주 비중이 커서 미국 희토류 랠리를 희석시켰다.)
+//   → ETF + 주도 개별주 바스켓의 **중앙값**으로 본다.
+const MAP: { syms: string[]; label: string; re: RegExp }[] = [
+  { syms: ["SMH", "TSM", "AVGO", "MU"],       label: "반도체",        re: /반도체|파운드리|웨이퍼|비메모리|시스템반도체/ },
+  { syms: ["NVDA", "AMD", "PLTR", "AIQ"],     label: "AI·GPU",       re: /AI|인공지능|HBM|온디바이스|데이터센터|GPU|CXL/ },
+  { syms: ["SKYY", "ORCL", "SNOW"],           label: "클라우드",       re: /클라우드|데이터센터|서버/ },
+  { syms: ["BOTZ", "ISRG", "SERV"],           label: "로봇",          re: /로봇/ },
+  { syms: ["QTUM", "IONQ", "RGTI", "QBTS"],   label: "양자컴퓨팅",     re: /양자/ },
+  { syms: ["CIBR", "CRWD", "PANW"],           label: "사이버보안",     re: /보안|사이버/ },
+  { syms: ["LIT", "ALB", "SQM", "ENS"],       label: "2차전지",       re: /2차전지|이차전지|전기차|리튬|폐배터리|전해질|양극재|음극재/ },
+  { syms: ["DRIV", "TSLA", "MBLY"],           label: "자율주행",       re: /자율주행|스마트카|전장/ },
+  { syms: ["CARZ", "GM", "F"],                label: "자동차",        re: /자동차|타이어/ },
+  { syms: ["XBI", "IBB", "MRNA"],             label: "바이오",        re: /제약|바이오|임상|신약|줄기세포|유전자|항암/ },
+  { syms: ["IHI", "ISRG", "SYK"],             label: "의료기기",       re: /의료기기|헬스케어|치과|미용|덴탈/ },
+  { syms: ["ITA", "LMT", "RTX", "NOC"],       label: "방산",          re: /방위산업|방산|무기|전투기/ },
+  { syms: ["UFO", "RKLB", "LUNR", "ASTS"],    label: "우주·위성",      re: /우주|위성|항공/ },
+  { syms: ["URA", "CCJ", "OKLO", "SMR"],      label: "원자력·우라늄",   re: /원자력|원전|우라늄|SMR/ },
+  { syms: ["TAN", "FSLR", "ENPH"],            label: "태양광",        re: /태양광|태양열/ },
+  { syms: ["ICLN", "NEE", "BEP"],             label: "신재생",        re: /풍력|신재생|재생에너지|ESS/ },
+  { syms: ["PLUG", "BE", "BLDP"],             label: "수소",          re: /수소|연료전지/ },
+  { syms: ["XLE", "XOM", "SLB"],              label: "에너지·정유",    re: /석유|정유|가스|LNG|셰일/ },
+  { syms: ["XLU", "VST", "GEV"],              label: "전력·유틸리티",  re: /전력|전선|스마트그리드|송배전|변압기/ },
+  { syms: ["XLB", "DOW", "NUE"],              label: "소재·화학",      re: /화학|철강|비철|시멘트|정밀화학/ },
+  { syms: ["REMX", "MP", "USAR", "UUUU"],     label: "희토류·광물",    re: /희토류|니켈|광물|마그네슘/ },
+  { syms: ["GLD", "NEM", "GDX"],              label: "금",            re: /금|귀금속/ },
+  { syms: ["BOAT", "ZIM", "MATX"],            label: "해운·조선",      re: /해운|조선|물류|항만/ },
+  { syms: ["XLF", "JPM", "GS"],               label: "금융",          re: /은행|증권|보험|금융지주|카드/ },
+  { syms: ["XLRE", "CAT", "VMC"],             label: "건설·부동산",    re: /건설|부동산|리츠|건자재/ },
+  { syms: ["XLI", "DE", "ETN"],               label: "기계·산업재",    re: /기계|중장비|공작기계|공작/ },
+  { syms: ["ESPO", "EA", "RBLX"],             label: "게임",          re: /게임|메타버스/ },
+  { syms: ["XLC", "NFLX", "DIS"],             label: "미디어·엔터",    re: /엔터테인먼트|미디어|영화|음원|드라마|광고|웹툰/ },
+  { syms: ["XLY", "AMZN", "LULU"],            label: "소비재·유통",    re: /백화점|소매유통|화장품|의류|면세/ },
+  { syms: ["XLP", "KO", "PEP"],               label: "음식료",        re: /음식료|식품|주류|담배|사료/ },
+  { syms: ["MOO", "MOS", "CF"],               label: "농업·비료",      re: /비료|농업|곡물|농기계/ },
+  { syms: ["IBIT", "MSTR", "COIN"],           label: "비트코인",       re: /가상화폐|비트코인|블록체인|암호화폐/ },
 ];
 
 // ── 미국: 최근 세션 등락률 ────────────────────────────────────────────────
-export interface UsTheme {
+export interface UsTicker {
   sym: string;
+  pct: number;
+}
+export interface UsTheme {
+  sym: string; // 대표 심볼 (바스켓 첫 번째)
   label: string;
-  pct: number | null;
+  pct: number | null; // 바스켓 중앙값
   date: string; // 해당 미국 거래일 (YYYY-MM-DD)
+  tickers: UsTicker[]; // 구성 심볼별 등락률 (내림차순) — 뭐가 끌었는지 보이게
 }
 
-async function fetchUs(): Promise<UsTheme[]> {
-  const out = await Promise.all(
-    MAP.map(async ({ sym, label }) => {
-      try {
-        const j = (await (
-          await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=5d&interval=1d`, UA)
-        ).json()) as {
-          chart?: {
-            result?: {
-              timestamp?: number[];
-              indicators?: { quote?: { close?: (number | null)[] }[] };
-              meta?: { regularMarketPrice?: number; regularMarketTime?: number };
-            }[];
-          };
-        };
-        const q = j.chart?.result?.[0];
-        const closes = q?.indicators?.quote?.[0]?.close;
-        if (!q?.timestamp || !closes) return { sym, label, pct: null, date: "" };
-        const rows = q.timestamp
-          .map((t, i) => ({ t, c: closes[i] }))
-          .filter((x): x is { t: number; c: number } => x.c != null);
-        if (!rows.length) return { sym, label, pct: null, date: "" };
-        const last = rows[rows.length - 1];
-        const lastDay = new Date(last.t * 1000).toISOString().slice(0, 10);
+async function fetchOne(sym: string): Promise<{ pct: number; date: string } | null> {
+  try {
+    const j = (await (
+      await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=5d&interval=1d`, UA)
+    ).json()) as {
+      chart?: {
+        result?: {
+          timestamp?: number[];
+          indicators?: { quote?: { close?: (number | null)[] }[] };
+          meta?: { regularMarketPrice?: number; regularMarketTime?: number };
+        }[];
+      };
+    };
+    const q = j.chart?.result?.[0];
+    const closes = q?.indicators?.quote?.[0]?.close;
+    if (!q?.timestamp || !closes) return null;
+    const rows = q.timestamp
+      .map((t, i) => ({ t, c: closes[i] }))
+      .filter((x): x is { t: number; c: number } => x.c != null);
+    if (!rows.length) return null;
+    const last = rows[rows.length - 1];
+    const lastDay = new Date(last.t * 1000).toISOString().slice(0, 10);
 
-        // 야후는 최신 세션 봉을 timestamp엔 넣고 close는 null로 둔 채 한동안 놔둔다.
-        // 그대로 쓰면 하루 밀린 등락률이 나오므로, meta의 현재가로 최신 세션을 직접 계산한다.
-        const mp = q.meta?.regularMarketPrice;
-        const mt = q.meta?.regularMarketTime;
-        if (mp && mt) {
-          const mDay = new Date(mt * 1000).toISOString().slice(0, 10);
-          if (mDay > lastDay) return { sym, label, pct: (mp / last.c - 1) * 100, date: mDay };
-        }
-        if (rows.length < 2) return { sym, label, pct: null, date: lastDay };
-        const prev = rows[rows.length - 2];
-        return { sym, label, pct: (last.c / prev.c - 1) * 100, date: lastDay };
-      } catch {
-        return { sym, label, pct: null, date: "" };
-      }
-    }),
-  );
-  return out;
+    // 야후는 최신 세션 봉을 timestamp엔 넣고 close는 null로 둔 채 한동안 놔둔다.
+    // 그대로 쓰면 하루 밀린 등락률이 나오므로, meta의 현재가로 최신 세션을 직접 계산한다.
+    const mp = q.meta?.regularMarketPrice;
+    const mt = q.meta?.regularMarketTime;
+    if (mp && mt) {
+      const mDay = new Date(mt * 1000).toISOString().slice(0, 10);
+      if (mDay > lastDay) return { pct: (mp / last.c - 1) * 100, date: mDay };
+    }
+    if (rows.length < 2) return null;
+    return { pct: (last.c / rows[rows.length - 2].c - 1) * 100, date: lastDay };
+  } catch {
+    return null;
+  }
+}
+
+const median = (a: number[]) => {
+  const s = [...a].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+async function fetchUs(): Promise<UsTheme[]> {
+  // 심볼은 테마 간 중복되므로(ISRG 등) 한 번씩만 조회한다.
+  const syms = [...new Set(MAP.flatMap((m) => m.syms))];
+  const got = new Map<string, { pct: number; date: string }>();
+  for (let i = 0; i < syms.length; i += 20) {
+    const part = syms.slice(i, i + 20);
+    const rs = await Promise.all(part.map(fetchOne));
+    part.forEach((s, k) => {
+      if (rs[k]) got.set(s, rs[k]!);
+    });
+  }
+  return MAP.map(({ syms: ss, label }) => {
+    const tickers = ss
+      .map((s) => ({ sym: s, r: got.get(s) }))
+      .filter((x): x is { sym: string; r: { pct: number; date: string } } => !!x.r)
+      .map((x) => ({ sym: x.sym, pct: x.r.pct, date: x.r.date }));
+    if (!tickers.length) return { sym: ss[0], label, pct: null, date: "", tickers: [] };
+    // 중앙값: ETF 한 종목이 테마를 희석시키거나, 잡주 하나가 테마를 부풀리는 걸 둘 다 막는다.
+    return {
+      sym: ss[0],
+      label,
+      pct: median(tickers.map((t) => t.pct)),
+      date: tickers[0].date,
+      tickers: tickers.map(({ sym, pct }) => ({ sym, pct })).sort((a, b) => b.pct - a.pct),
+    };
+  });
 }
 
 // ── 국내: 테마 구성종목의 시세·시총 (벌크) ─────────────────────────────────
@@ -160,12 +196,12 @@ export async function getUsMap(): Promise<UsMapResult> {
   const picked = new Map<string, { no: string; name: string; chg: number }>();
   const rowThemes = new Map<string, string[]>(); // sym → theme no[]
   for (const u of us) {
-    const rule = MAP.find((m) => m.sym === u.sym)!;
+    const rule = MAP.find((m) => m.label === u.label)!;
     const hit = themes
       .filter((t) => rule.re.test(t.name))
       .sort((a, b) => b.chg - a.chg)
       .slice(0, 3);
-    rowThemes.set(u.sym, hit.map((t) => t.no));
+    rowThemes.set(u.label, hit.map((t) => t.no));
     for (const t of hit) picked.set(t.no, t);
   }
 
@@ -202,7 +238,7 @@ export async function getUsMap(): Promise<UsMapResult> {
   const rows: UsMapRow[] = us
     .map((u) => ({
       ...u,
-      kr: (rowThemes.get(u.sym) ?? []).map(krOf).filter((x): x is KrTheme => !!x),
+      kr: (rowThemes.get(u.label) ?? []).map(krOf).filter((x): x is KrTheme => !!x),
     }))
     .sort((a, b) => (b.pct ?? -99) - (a.pct ?? -99));
 
