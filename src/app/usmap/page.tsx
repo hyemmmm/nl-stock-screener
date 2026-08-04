@@ -11,6 +11,32 @@ const pct = (x: number | null) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${x.
 const cls = (x: number | null) => (x == null ? "text-zinc-500" : x > 0 ? "text-up" : x < 0 ? "text-down" : "text-zinc-400");
 const eok = (won: number) => (won >= 1e12 ? `${(won / 1e12).toFixed(1)}조` : `${Math.round(won / 1e8).toLocaleString()}억`);
 
+// 과거 모드: 그날 시가에 샀으면 어땠나를 한 줄로
+function StratLine({ k }: { k: KrTheme }) {
+  const ss = k.stocks.filter((s) => s.strat != null);
+  if (!ss.length) return null;
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const gap = avg(ss.map((s) => s.openPct ?? 0));
+  const o2c = avg(ss.map((s) => s.o2c ?? 0));
+  const st = avg(ss.map((s) => s.strat ?? 0));
+  const win = (ss.filter((s) => (s.strat ?? 0) > 0).length / ss.length) * 100;
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 rounded-lg bg-ink-800 px-2.5 py-1.5 text-[11px]">
+      <span className="text-zinc-500">시가 매수 시</span>
+      <span className="text-zinc-400">
+        갭 <b className={cls(gap)}>{pct(gap)}</b>
+      </span>
+      <span className="text-zinc-400">
+        시→종 <b className={cls(o2c)}>{pct(o2c)}</b>
+      </span>
+      <span className="text-zinc-400">
+        전략 <b className={cls(st)}>{pct(st)}</b>
+      </span>
+      <span className="text-zinc-500">승률 {win.toFixed(0)}%</span>
+    </div>
+  );
+}
+
 function ThemeCard({ k }: { k: KrTheme }) {
   return (
     <div className="rounded-xl border border-ink-700 bg-ink-900/40 p-3">
@@ -57,6 +83,8 @@ function ThemeCard({ k }: { k: KrTheme }) {
         )}
       </div>
 
+      <StratLine k={k} />
+
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5">
         {k.stocks.slice(0, 8).map((s) => (
           <a
@@ -65,8 +93,16 @@ function ThemeCard({ k }: { k: KrTheme }) {
             target="_blank"
             rel="noreferrer"
             className="text-[11px] text-zinc-400 hover:text-zinc-200"
+            title={
+              s.strat != null
+                ? `갭 ${pct(s.openPct ?? 0)} · 시→종 ${pct(s.o2c ?? 0)} · 전략 ${pct(s.strat)}`
+                : undefined
+            }
           >
             {s.name} <span className={cls(s.pct)}>{pct(s.pct)}</span>
+            {s.strat != null && (
+              <span className={`ml-0.5 ${cls(s.strat)}`}>[{pct(s.strat)}]</span>
+            )}
           </a>
         ))}
       </div>
@@ -79,12 +115,13 @@ export default function UsMapPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [onlyUp, setOnlyUp] = useState(true);
+  const [date, setDate] = useState(""); // "" = 최신(라이브)
 
-  async function load() {
+  async function load(d = date) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/usmap", { cache: "no-store" });
+      const res = await fetch(`/api/usmap${d ? `?date=${d}` : ""}`, { cache: "no-store" });
       const j = await res.json();
       if (j.error) setError(j.error);
       else setData(j);
@@ -116,8 +153,31 @@ export default function UsMapPage() {
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 내일 후보
           </Link>
+          <input
+            type="date"
+            value={date}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => {
+              setDate(e.target.value);
+              load(e.target.value);
+            }}
+            disabled={loading}
+            className="rounded-lg border border-ink-600 bg-ink-800 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+          />
+          {date && (
+            <button
+              onClick={() => {
+                setDate("");
+                load("");
+              }}
+              disabled={loading}
+              className="text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              최신으로
+            </button>
+          )}
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
@@ -133,10 +193,40 @@ export default function UsMapPage() {
         </div>
       )}
 
-      <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-200/80">
-        검증 결과: 미장 테마가 국내로 이어질 확률은 80~90%지만{" "}
-        <b>그 연동은 대부분 시가 갭에서 끝난다.</b> 매수 신호가 아니라 지도로 쓸 것.
-      </div>
+      {data?.past ? (
+        (() => {
+          const ss = data.rows.flatMap((r) => r.kr).flatMap((k) => k.stocks).filter((s) => s.strat != null);
+          if (!ss.length) return null;
+          const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+          const st = avg(ss.map((s) => s.strat!));
+          const win = (ss.filter((s) => s.strat! > 0).length / ss.length) * 100;
+          return (
+            <div className="mb-4 rounded-xl border border-ink-600 bg-ink-800 px-4 py-3 text-xs">
+              <div className="mb-1 font-semibold text-zinc-200">
+                📅 {data.usDate} 미장 → {data.krDate} 국내 · 그날 시가에 샀다면
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
+                <span>표본 {ss.length}종목</span>
+                <span>
+                  평균 갭 <b className={cls(avg(ss.map((s) => s.openPct!)))}>{pct(avg(ss.map((s) => s.openPct!)))}</b>
+                </span>
+                <span>
+                  시→종 <b className={cls(avg(ss.map((s) => s.o2c!)))}>{pct(avg(ss.map((s) => s.o2c!)))}</b>
+                </span>
+                <span>
+                  전략(+3/-5) <b className={cls(st)}>{pct(st)}</b> · 승률 {win.toFixed(0)}%
+                </span>
+              </div>
+              <div className="mt-1.5 text-[11px] text-zinc-600">{data.note}</div>
+            </div>
+          );
+        })()
+      ) : (
+        <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-200/80">
+          검증 결과: 미장 테마가 국내로 이어질 확률은 80~90%지만{" "}
+          <b>그 연동은 대부분 시가 갭에서 끝난다.</b> 매수 신호가 아니라 지도로 쓸 것.
+        </div>
+      )}
 
       {error && (
         <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">

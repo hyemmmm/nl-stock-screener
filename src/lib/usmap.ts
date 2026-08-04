@@ -142,6 +142,10 @@ interface Quote {
   pct: number;
   value: number; // 거래대금(원)
   mcap: number; // 시가총액(원)
+  // 과거 재현 모드에서만 채워진다 — 그날 시가에 샀으면 어떻게 됐나
+  openPct?: number; // 갭 (전일종가 → 시가)
+  o2c?: number; // 시가 → 종가
+  strat?: number; // +3% 익절 / -5% 손절 / 종가청산
 }
 async function bulkQuotes(codes: string[]): Promise<Map<string, Quote>> {
   const map = new Map<string, Quote>();
@@ -186,7 +190,192 @@ export interface UsMapResult {
   usDate: string;
   krDate: string;
   rows: UsMapRow[];
+  past?: boolean; // 과거 날짜 재현 모드
   note?: string;
+}
+
+// ── 과거 재현 ──────────────────────────────────────────────────────────────
+//  미국 거래일 D의 테마 등락률 → 그 다음 국내 거래일에 시가 매수했으면 어땠나.
+//  ⚠️ 테마 구성종목은 '지금' 기준이다(네이버가 과거 편입 이력을 주지 않음).
+//     그래서 과거 재현은 참고용이고, 편입 시점 편향이 남아 있다.
+
+interface Bar {
+  date: string; // YYYYMMDD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  vol: number;
+}
+const p2 = (n: number) => String(n).padStart(2, "0");
+
+async function fetchBars(code: string, days = 500): Promise<Bar[]> {
+  const e = new Date(), s = new Date();
+  s.setDate(s.getDate() - days);
+  const ymd = (d: Date) => `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+  try {
+    const r = await fetch(
+      `https://api.finance.naver.com/siseJson.naver?symbol=${code}&requestType=1&startTime=${ymd(s)}&endTime=${ymd(e)}&timeframe=day`,
+      NH,
+    );
+    return (JSON.parse((await r.text()).replace(/'/g, '"').replace(/,\s*\]/g, "]")) as unknown[][])
+      .slice(1)
+      .map((x) => ({
+        date: String(x[0]),
+        open: +(x[1] as number),
+        high: +(x[2] as number),
+        low: +(x[3] as number),
+        close: +(x[4] as number),
+        vol: +(x[5] as number) || 0,
+      }))
+      .filter((b) => b.open > 0 && b.close > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
+// 시가 매수 → +3% 익절 / -5% 손절 / 아니면 종가청산.
+// 분봉이 없어 둘 다 닿은 날은 손절로 본다(최악 가정).
+function strategy(b: Bar): number {
+  const tp = (b.high / b.open - 1) * 100 >= 3;
+  const sl = (b.low / b.open - 1) * 100 <= -5;
+  if (tp && sl) return -5;
+  if (tp) return 3;
+  if (sl) return -5;
+  return (b.close / b.open - 1) * 100;
+}
+
+// 야후 심볼의 특정 날짜 등락률
+async function fetchOneAt(sym: string, date: string): Promise<number | null> {
+  try {
+    const j = (await (
+      await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=2y&interval=1d`, UA)
+    ).json()) as {
+      chart?: { result?: { timestamp?: number[]; indicators?: { quote?: { close?: (number | null)[] }[] } }[] };
+    };
+    const q = j.chart?.result?.[0];
+    const closes = q?.indicators?.quote?.[0]?.close;
+    if (!q?.timestamp || !closes) return null;
+    const rows = q.timestamp
+      .map((t, i) => ({ d: new Date(t * 1000).toISOString().slice(0, 10), c: closes[i] }))
+      .filter((x): x is { d: string; c: number } => x.c != null);
+    const i = rows.findIndex((r) => r.d === date);
+    if (i < 1) return null;
+    return (rows[i].c / rows[i - 1].c - 1) * 100;
+  } catch {
+    return null;
+  }
+}
+
+export async function getUsMapAt(date: string): Promise<UsMapResult> {
+  // 1) 미국: 그날 테마별 바스켓 중앙값
+  const syms = [...new Set(MAP.flatMap((m) => m.syms))];
+  const got = new Map<string, number>();
+  for (let i = 0; i < syms.length; i += 20) {
+    const part = syms.slice(i, i + 20);
+    const rs = await Promise.all(part.map((s) => fetchOneAt(s, date)));
+    part.forEach((s, k) => {
+      if (rs[k] != null) got.set(s, rs[k]!);
+    });
+  }
+  const us: UsTheme[] = MAP.map(({ syms: ss, label }) => {
+    const tickers = ss
+      .filter((s) => got.has(s))
+      .map((s) => ({ sym: s, pct: got.get(s)! }));
+    return {
+      sym: ss[0],
+      label,
+      pct: tickers.length ? median(tickers.map((t) => t.pct)) : null,
+      date,
+      tickers: tickers.sort((a, b) => b.pct - a.pct),
+    };
+  }).sort((a, b) => (b.pct ?? -99) - (a.pct ?? -99));
+
+  // 2) 국내: 상위 테마만 재현한다 (전 테마를 일봉으로 훑으면 60초를 넘긴다)
+  const themes = await fetchThemes();
+  const top = us.filter((u) => u.pct != null).slice(0, 10);
+  const picked = new Map<string, { no: string; name: string }>();
+  const rowThemes = new Map<string, string[]>();
+  for (const u of top) {
+    const rule = MAP.find((m) => m.label === u.label)!;
+    const hit = themes.filter((t) => rule.re.test(t.name)).slice(0, 2);
+    rowThemes.set(u.label, hit.map((t) => t.no));
+    for (const t of hit) picked.set(t.no, { no: t.no, name: t.name });
+  }
+  const consts = new Map<string, string[]>();
+  const list = [...picked.values()];
+  for (let i = 0; i < list.length; i += 8) {
+    await Promise.all(
+      list.slice(i, i + 8).map(async (t) => {
+        const ss = await fetchThemeStocks(t.no).catch(() => []);
+        consts.set(t.no, ss.slice(0, 10).map((s) => s.code));
+      }),
+    );
+  }
+
+  const codes = [...new Set([...consts.values()].flat())];
+  const bars = new Map<string, Bar[]>();
+  for (let i = 0; i < codes.length; i += 10) {
+    const part = codes.slice(i, i + 10);
+    const rs = await Promise.all(part.map((c) => fetchBars(c)));
+    part.forEach((c, k) => bars.set(c, rs[k]));
+  }
+  // 이름은 현재 시세 조회로 채운다(일봉엔 종목명이 없다)
+  const names = await bulkQuotes(codes);
+
+  // 미국 거래일 D 다음의 첫 국내 거래일
+  const dYmd = date.replace(/-/g, "");
+  let krYmd = "";
+  for (const bs of bars.values()) {
+    const hit = bs.find((b) => b.date > dYmd);
+    if (hit && (!krYmd || hit.date < krYmd)) krYmd = hit.date;
+  }
+
+  const krOf = (no: string): KrTheme | null => {
+    const t = picked.get(no);
+    if (!t || !krYmd) return null;
+    const ss: Quote[] = [];
+    for (const c of consts.get(no) ?? []) {
+      const bs = bars.get(c) ?? [];
+      const i = bs.findIndex((b) => b.date === krYmd);
+      if (i < 1) continue;
+      const b = bs[i], prev = bs[i - 1];
+      ss.push({
+        code: c,
+        name: names.get(c)?.name ?? c,
+        pct: (b.close / prev.close - 1) * 100,
+        value: b.close * b.vol,
+        mcap: names.get(c)?.mcap ?? 0,
+        openPct: (b.open / prev.close - 1) * 100,
+        o2c: (b.close / b.open - 1) * 100,
+        strat: strategy(b),
+      });
+    }
+    if (!ss.length) return null;
+    ss.sort((a, b) => b.pct - a.pct);
+    const big = [...ss].sort((a, b) => b.mcap - a.mcap)[0] ?? null;
+    const byValue = [...ss].sort((a, b) => b.value - a.value);
+    const liquid = byValue.slice(0, Math.max(3, Math.ceil(byValue.length / 2)));
+    const leader = [...liquid].sort((a, b) => b.pct - a.pct)[0] ?? null;
+    const chg = ss.reduce((a, b) => a + b.pct, 0) / ss.length;
+    return { no, name: t.name, chg, big, leader, stocks: ss.slice(0, 10) };
+  };
+
+  const rows: UsMapRow[] = us.map((u) => ({
+    ...u,
+    kr: (rowThemes.get(u.label) ?? []).map(krOf).filter((x): x is KrTheme => !!x),
+  }));
+
+  return {
+    usDate: date,
+    krDate: krYmd ? `${krYmd.slice(0, 4)}-${krYmd.slice(4, 6)}-${krYmd.slice(6, 8)}` : "",
+    rows,
+    past: true,
+    note: krYmd
+      ? "테마 구성종목은 '지금' 기준입니다(네이버가 과거 편입 이력을 주지 않음). 상위 10개 테마만 재현합니다."
+      : "그 날짜의 국내 거래일 데이터를 찾지 못했습니다.",
+  };
 }
 
 export async function getUsMap(): Promise<UsMapResult> {
