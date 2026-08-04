@@ -146,6 +146,9 @@ export default function HomePage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          <Link href="/usmap" className="text-xs text-indigo-400 hover:text-indigo-300">
+            🇺🇸 미장 테마 →
+          </Link>
           <Link href="/afterhours" className="text-xs text-indigo-400 hover:text-indigo-300">
             🌙 시간외 테마 →
           </Link>
