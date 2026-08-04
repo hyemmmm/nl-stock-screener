@@ -126,10 +126,10 @@ export interface AfterHoursResult {
   note?: string;
 }
 
-const LITE = !!process.env.VERCEL;
-
+// 테마 수를 줄이면 커버리지가 그대로 깎인다(120개로 줄였더니 🔥로 잡힌 테마가 통째로 누락됐다).
+// 전 종목 스캔이 2~3초, 서버리스 실측 15초로 60초 한도에 여유가 있어 배포에서도 전부 본다.
 export async function getAfterHours(): Promise<AfterHoursResult> {
-  const [codeMap, defs] = await Promise.all([allCodes(), themeDefs(LITE ? 120 : 260)]);
+  const [codeMap, defs] = await Promise.all([allCodes(), themeDefs(260)]);
   const quotes = await fetchOverBulk([...codeMap.keys()]);
 
   const kst = new Date(Date.now() + 9 * 3600e3);
