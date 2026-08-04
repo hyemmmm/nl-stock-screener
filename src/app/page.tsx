@@ -146,6 +146,12 @@ export default function HomePage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          <Link href="/afterhours" className="text-xs text-indigo-400 hover:text-indigo-300">
+            🌙 시간외 테마 →
+          </Link>
+          <Link href="/movers" className="text-xs text-indigo-400 hover:text-indigo-300">
+            🚀 상한가·거래량 →
+          </Link>
           <Link href="/attention" className="text-xs text-indigo-400 hover:text-indigo-300">
             🔍 관심종목 →
           </Link>
