@@ -129,7 +129,7 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
-      <header className="mb-4 flex items-end justify-between gap-3">
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             📌 내일 시가 후보
@@ -145,7 +145,7 @@ export default function HomePage() {
             )}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/usmap" className="text-xs text-indigo-400 hover:text-indigo-300">
             🇺🇸 미장 테마 →
           </Link>

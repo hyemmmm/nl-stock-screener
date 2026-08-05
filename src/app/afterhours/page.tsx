@@ -56,7 +56,7 @@ export default function AfterHoursPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
-      <header className="mb-4 flex items-end justify-between gap-3">
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             🌙 시간외 테마 감지
@@ -66,7 +66,7 @@ export default function AfterHoursPage() {
             내일 그게 테마가 될 확률이 크다 — 그 폭(breadth)을 잰다.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 내일 후보
           </Link>

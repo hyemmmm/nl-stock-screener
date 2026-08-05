@@ -76,7 +76,7 @@ export default function DiscBacktestPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
-      <header className="mb-6 flex items-end justify-between">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">공시 백테스트</h1>
           <p className="mt-2 text-sm text-zinc-400">

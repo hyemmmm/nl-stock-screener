@@ -82,7 +82,7 @@ export default function AttentionPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10">
-      <header className="mb-4 flex items-end justify-between gap-3">
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             🔍 관심 종목 판별
@@ -93,7 +93,7 @@ export default function AttentionPage() {
             <span className="text-down">팔려는 관심</span>인지 재료·차트·거래량·시황·수급으로 분해.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">
             ← 내일 후보
           </Link>
